@@ -4,6 +4,7 @@ import traceback
 from collections import deque
 
 from ros_monitor_bridge.config import HEAVY_MESSAGE_TYPES
+from ros_monitor_bridge.pid_scanner import scan as scan_pids
 from ros_monitor_bridge.utils import trim_payload
 
 ROS_AVAILABLE = False
@@ -78,7 +79,23 @@ if ROS_AVAILABLE:
                     raw_topics = self.get_topic_names_and_types()
                     raw_services = self.get_service_names_and_types()
 
-                    nodes_list = [{"name": name, "namespace": namespace} for name, namespace in raw_nodes]
+                    # Build fully-qualified names then scan /proc once for all nodes
+                    fq_names = [
+                        f"{ns.rstrip('/')}/{name}".replace('//', '/')
+                        for name, ns in raw_nodes
+                    ]
+                    pid_map = scan_pids(fq_names)
+
+                    nodes_list = [
+                        {
+                            "name": name,
+                            "namespace": namespace,
+                            "pid": pid_map.get(
+                                f"{namespace.rstrip('/')}/{name}".replace('//', '/')
+                            ),
+                        }
+                        for name, namespace in raw_nodes
+                    ]
                     filtered_topics = []
                     filtered_services = []
                     action_groups = {}

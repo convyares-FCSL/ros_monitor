@@ -1148,6 +1148,44 @@ header.glass-panel {
     box-shadow: 0 0 6px rgba(239, 68, 68, 0.25);
 }
 
+/* --- PID Badges --- */
+.pid-badge {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pid-alive {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.pid-phantom {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.45);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.2);
+    animation: phantom-pulse 2s ease-in-out infinite;
+}
+
+@keyframes phantom-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
+}
+
+.icon-inline-xs {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+
 /* --- Node Parameters Section --- */
 .params-section {
     margin-bottom: 12px;

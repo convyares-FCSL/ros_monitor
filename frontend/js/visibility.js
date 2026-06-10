@@ -7,6 +7,7 @@ import {
     GENERIC_NODE_PREFIXES,
     GENERIC_DEFAULT_TOPICS,
     GENERIC_DEFAULT_NODES,
+    GENERIC_DEFAULT_NODE_PREFIXES,
     refreshIcons,
 } from './state.js';
 import { inspectEntity } from './inspector.js';
@@ -36,7 +37,12 @@ export function isDefaultGenericName(type, name) {
     }
 
     if (type === NODE_TYPES.NODE) {
-        return GENERIC_DEFAULT_NODES.has(name);
+        if (GENERIC_DEFAULT_NODES.has(name)) return true;
+        // Hardcoded: ros2cli daemon nodes have a random PID/UUID suffix — match by prefix.
+        const bare = name.startsWith('/') ? name.slice(1) : name;
+        if (bare.startsWith('_ros2cli_daemon')) return true;
+        return Array.isArray(GENERIC_DEFAULT_NODE_PREFIXES)
+            && GENERIC_DEFAULT_NODE_PREFIXES.some(p => name.startsWith(p));
     }
 
     if (type === NODE_TYPES.SERVICE) {

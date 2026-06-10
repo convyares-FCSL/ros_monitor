@@ -7,6 +7,7 @@ import {
     handleLifecycleEvent,
     handleFrequencyUpdate,
     handleNodeParams,
+    handleServiceInvoked,
     clearGraph,
 } from './graph.js';
 
@@ -46,6 +47,8 @@ export function initWebSocket() {
                 handleFrequencyUpdate(msg.data);
             } else if (msg.type === 'node_params_event') {
                 handleNodeParams(msg.data);
+            } else if (msg.type === 'service_invoked') {
+                handleServiceInvoked(msg.data);
             }
         } catch (err) {
             console.error("Error processing websocket message:", err);

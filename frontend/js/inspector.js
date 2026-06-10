@@ -200,10 +200,12 @@ function renderNodeInspector(vertex, groups, selectedEntry) {
     const actionServers = actions.filter((action) => action.servers.includes(vertex.name)).map((action) => action.name);
 
     const lifecycleHtml = renderLifecycleSection(vertex.name);
-    const paramsHtml = renderParamsSection(vertex.name);
+    const pidHtml       = renderPidSection(vertex.name);
+    const paramsHtml    = renderParamsSection(vertex.name);
 
     return `
         ${lifecycleHtml}
+        ${pidHtml}
         <section class="entity-info-grid">
             ${renderInfoCard('Publisher', publishers)}
             ${renderInfoCard('Subscriber', subscribers)}
@@ -278,6 +280,25 @@ function renderLifecycleSection(nodeName) {
         <div class="lifecycle-status-row">
             <span class="lbl">Lifecycle</span>
             <span class="lifecycle-badge ${cssClass}">${label}</span>
+        </div>
+    `;
+}
+
+function renderPidSection(nodeName) {
+    if (!Object.prototype.hasOwnProperty.call(state.nodePids, nodeName)) return '';
+    const pid = state.nodePids[nodeName];
+    if (pid !== null) {
+        return `
+            <div class="lifecycle-status-row">
+                <span class="lbl">PID</span>
+                <span class="pid-badge pid-alive">${pid}</span>
+            </div>
+        `;
+    }
+    return `
+        <div class="lifecycle-status-row">
+            <span class="lbl">PID</span>
+            <span class="pid-badge pid-phantom"><i data-lucide="ghost" class="icon-inline-xs"></i> not found — possible phantom</span>
         </div>
     `;
 }

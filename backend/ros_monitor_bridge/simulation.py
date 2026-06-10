@@ -121,6 +121,16 @@ class SimulatedBridge:
                 self._emit_frequency_update(now, t)
                 self._last_hz_emit = now
 
+            # --- Service invocation (every ~8s, staccato spike demo) ---
+            if math.floor(t / 8) != math.floor((t - 0.1) / 8):
+                self.runtime.dispatch_event(
+                    {
+                        "type": "service_invoked",
+                        "timestamp": now,
+                        "data": {"service_name": "/set_pose"},
+                    }
+                )
+
             # --- Action simulation ---
             if not action_active and int(now) % 12 == 0:
                 action_active = True

@@ -70,13 +70,21 @@ export const GENERIC_SERVICE_SUFFIXES = [
 ];
 
 // The bridge's own ROS 2 node - all of its services are infrastructure noise.
-export const GENERIC_NODE_PREFIXES = ['/ros_websocket_bridge/'];
+export const GENERIC_NODE_PREFIXES = ['/ros_websocket_bridge/', '/ros2_websocket_bridge/'];
 
 // Topics that are generic (hidden, collapsible) by default.
 export const GENERIC_DEFAULT_TOPICS = new Set(['/rosout']);
 
-// Nodes that are generic (hidden, collapsible) by default - the bridge's own node.
-export const GENERIC_DEFAULT_NODES = new Set(['/ros_websocket_bridge']);
+// Nodes that are generic (hidden, collapsible) by default.
+// Include both slash-prefixed (simulation) and plain (real ROS 2) name forms.
+export const GENERIC_DEFAULT_NODES = new Set([
+    'ros2_websocket_bridge', '/ros2_websocket_bridge',
+    'ros_websocket_bridge',  '/ros_websocket_bridge',
+]);
+
+// Node name prefixes that are always built-in infrastructure noise.
+// _ros2cli_daemon_* nodes have a random hex suffix so must be matched by prefix.
+export const GENERIC_DEFAULT_NODE_PREFIXES = ['_ros2cli_daemon_', '/_ros2cli_daemon_'];
 
 // --- Shared Mutable Application State ---
 export const state = {
@@ -123,6 +131,7 @@ export const state = {
     // Lifecycle & telemetry state
     nodeLifecycleState: {},   // node_name -> lifecycle state string
     nodeParams: {},            // node_name -> { param: value }
+    nodePids: {},              // node_name -> pid (int) | null (not found = possible phantom)
     topicHz: {},              // topic_name -> { hz, health, lastUpdate }
     topicHzHistory: {},       // topic_name -> [{ts, hz}, ...] (30s rolling)
 
