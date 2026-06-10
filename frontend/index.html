@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D ROS 2 Network Visualizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Lucide icons for high-tech HUD layout -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay / HUD -->
+    <div id="hud-container">
+        
+        <!-- Header Panel -->
+        <header class="glass-panel">
+            <div class="logo-area">
+                <i data-lucide="activity" class="logo-icon glow-cyan"></i>
+                <div class="logo-text">
+                    <h1>ROS2 <span>3D.Pulse</span></h1>
+                    <p class="subtitle">Real-Time Network Graph</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-badge">
+                    <span class="label">NODES</span>
+                    <span id="stat-node-count" class="value">0</span>
+                </div>
+                <div class="stat-badge">
+                    <span class="label">TOPICS</span>
+                    <span id="stat-topic-count" class="value">0</span>
+                </div>
+                <div class="stat-badge">
+                    <span class="label">ACTIONS</span>
+                    <span id="stat-action-count" class="value">0</span>
+                </div>
+                <div class="stat-badge">
+                    <span class="label">BANDWIDTH</span>
+                    <span id="stat-bandwidth" class="value">0 KB/s</span>
+                </div>
+            </div>
+            <div class="status-area">
+                <div id="conn-status" class="status-indicator disconnected">
+                    <span class="status-dot"></span>
+                    <span class="status-text">DISCONNECTED</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Left Control & Graph Explorer Panel -->
+        <aside class="sidebar glass-panel" id="sidebar-panel">
+            <div class="sidebar-header">
+                <h2>Network Explorer</h2>
+                <button id="toggle-sidebar" class="icon-button"><i data-lucide="chevron-left"></i></button>
+            </div>
+            
+            <div class="sidebar-sections">
+                <!-- Node Section -->
+                <section class="explorer-section">
+                    <div class="section-title">
+                        <i data-lucide="box" class="section-icon text-cyan"></i>
+                        <h3>Nodes</h3>
+                        <span class="section-count" id="count-nodes">0</span>
+                    </div>
+                    <ul class="graph-list" id="node-list">
+                        <li class="empty-list">No active nodes</li>
+                    </ul>
+                </section>
+
+                <!-- Topics Section -->
+                <section class="explorer-section">
+                    <div class="section-title">
+                        <i data-lucide="git-commit" class="section-icon text-orange"></i>
+                        <h3>Topics</h3>
+                        <span class="section-count" id="count-topics">0</span>
+                    </div>
+                    <ul class="graph-list" id="topic-list">
+                        <li class="empty-list">No active topics</li>
+                    </ul>
+                </section>
+
+                <!-- Actions Section -->
+                <section class="explorer-section">
+                    <div class="section-title">
+                        <i data-lucide="layers" class="section-icon text-purple"></i>
+                        <h3>Actions</h3>
+                        <span class="section-count" id="count-actions">0</span>
+                    </div>
+                    <ul class="graph-list" id="action-list">
+                        <li class="empty-list">No active actions</li>
+                    </ul>
+                </section>
+
+                <!-- Services Section -->
+                <section class="explorer-section">
+                    <div class="section-title">
+                        <i data-lucide="arrow-right-left" class="section-icon text-green"></i>
+                        <h3>Services</h3>
+                        <span class="section-count" id="count-services">0</span>
+                    </div>
+                    <ul class="graph-list" id="service-list">
+                        <li class="empty-list">No active services</li>
+                    </ul>
+                </section>
+            </div>
+        </aside>
+
+        <!-- Floating Controls Panel (Bottom Left) -->
+        <div class="controls-overlay glass-panel">
+            <div class="controls-title">Viewport Controls</div>
+            <div class="controls-hint">
+                <div class="hint-item"><span class="mouse-btn">L-Click</span> + Drag to Rotate</div>
+                <div class="hint-item"><span class="mouse-btn">R-Click</span> + Drag to Pan</div>
+                <div class="hint-item"><span class="mouse-btn">Scroll</span> to Zoom</div>
+                <div class="hint-item"><span class="mouse-btn glow-green">Click</span> traveling message to INSPECT/PAUSE</div>
+            </div>
+            <div class="action-buttons">
+                <button id="btn-recenter" class="action-btn"><i data-lucide="maximize-2"></i> Recenter Camera</button>
+                <button id="btn-toggle-sim" class="action-btn btn-secondary"><i data-lucide="play"></i> Toggle Simulation</button>
+            </div>
+        </div>
+
+        <!-- Dynamic Message Inspector Panel (Right Drawer) -->
+        <div class="inspector-drawer glass-panel" id="inspector-panel">
+            <div class="drawer-header">
+                <div class="inspector-tag"><i data-lucide="search" class="icon-inline"></i> Packet Inspector</div>
+                <button id="close-inspector" class="icon-button"><i data-lucide="x"></i></button>
+            </div>
+            
+            <div class="drawer-content" id="inspector-content">
+                <div class="empty-inspector">
+                    <i data-lucide="help-circle" class="large-icon"></i>
+                    <p>Click on any traveling 3D message icon to pause and inspect its payload</p>
+                </div>
+            </div>
+            
+            <div class="drawer-footer" style="display: none;" id="inspector-footer">
+                <button id="btn-resume-particle" class="resume-btn"><i data-lucide="play-circle"></i> Resume Telemetry Stream</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script imports -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
