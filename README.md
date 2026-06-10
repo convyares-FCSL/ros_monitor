@@ -66,7 +66,7 @@ Terminal 2:
 Then open:
 
 ```text
-http://localhost:8080
+http://localhost:7260
 ```
 
 The demo publishes topics, exposes a service, and runs a Fibonacci action so the visualizer has a real graph to render.
@@ -89,7 +89,7 @@ Use this option to test the interactive 3D frontend and verify the layout engine
    *Note: If `rclpy` is not installed, the bridge script will automatically fall back to simulation mode even without the `--sim` flag.*
 3. Open your browser and navigate to:
    ```
-   http://localhost:8080
+   http://localhost:7260
    ```
 4. Click the **Toggle Simulation** button in the bottom-left controls overlay to start the local message streams.
 
@@ -118,9 +118,9 @@ Use this option inside a sourced ROS 2 workspace.
    ```
 5. Open a browser (on the same machine or on a computer on the same network) and go to:
    ```
-   http://<RASPBERRY_PI_IP>:8080
+   http://<RASPBERRY_PI_IP>:7260
    ```
-   *(Ensure port `8080` and `8765` are open on the Raspberry Pi's firewall).*
+   *(Ensure port `7260` and `8765` are open on the Raspberry Pi's firewall).*
 
 If the bridge logs warnings such as `Could not dynamically subscribe ... No module named ...`, the graph is still visible, but payload decoding for those topic types is unavailable until the workspace that defines those interfaces is sourced before starting the bridge.
 

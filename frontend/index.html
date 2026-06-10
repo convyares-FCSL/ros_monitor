@@ -54,12 +54,12 @@
         </header>
 
         <!-- Left Control & Graph Explorer Panel -->
+        <button id="toggle-sidebar" class="icon-button sidebar-toggle-btn" title="Toggle network explorer" aria-label="Toggle network explorer"><i data-lucide="chevron-left"></i></button>
         <aside class="sidebar glass-panel" id="sidebar-panel">
             <div class="sidebar-header">
                 <h2>Network Explorer</h2>
-                <button id="toggle-sidebar" class="icon-button"><i data-lucide="chevron-left"></i></button>
             </div>
-            
+
             <div class="sidebar-sections">
                 <!-- Node Section -->
                 <section class="explorer-section" data-section-type="node">
@@ -190,6 +190,6 @@
     <!-- Script imports -->
     <script src="vendor/three.min.js"></script>
     <script src="vendor/OrbitControls.js"></script>
-    <script src="app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

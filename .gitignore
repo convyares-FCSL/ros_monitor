@@ -6,3 +6,8 @@ __pycache__/
 ros2_demo_ws/build/
 ros2_demo_ws/install/
 ros2_demo_ws/log/
+
+# VS Code C++ IntelliSense browse databases (large binaries, machine-local)
+.vscode/browse.vc.db
+.vscode/browse.vc.db-shm
+.vscode/browse.vc.db-wal

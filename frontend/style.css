@@ -220,12 +220,36 @@ header.glass-panel {
 /* --- Left Explorer Sidebar --- */
 .sidebar {
     grid-area: sidebar;
-    height: 100%;
+    height: calc(100% - 16px);
+    min-height: 0;
     transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar.collapsed {
     transform: translateX(-340px);
+}
+
+/* Floating toggle button lives outside .sidebar so it stays reachable when collapsed */
+.sidebar-toggle-btn {
+    position: absolute;
+    top: 86px;
+    left: 336px;
+    z-index: 11;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    pointer-events: auto;
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+    transition: left var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-toggle-btn.collapsed {
+    left: 16px;
 }
 
 .sidebar-header {
@@ -262,6 +286,7 @@ header.glass-panel {
 
 .sidebar-sections {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 12px;
     display: flex;
@@ -423,6 +448,102 @@ header.glass-panel {
 .text-orange { color: var(--orange); }
 .text-purple { color: var(--purple); }
 .text-green { color: var(--green); }
+
+/* Collapsible "Built-in" group for generic/noise items (parameter services, /rosout, etc.) */
+.generic-group {
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: default;
+    display: block;
+}
+
+.generic-group:hover {
+    background: transparent;
+    border-color: transparent;
+}
+
+.generic-group-details {
+    width: 100%;
+}
+
+.generic-group-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid transparent;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+    transition: all 0.2s ease;
+}
+
+.generic-group-summary::-webkit-details-marker {
+    display: none;
+}
+
+.generic-group-summary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--border-color);
+}
+
+.generic-group-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+.generic-group-details[open] .generic-group-chevron {
+    transform: rotate(90deg);
+}
+
+.generic-group-label {
+    flex: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.7rem;
+}
+
+.generic-group-toggle {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+}
+
+.generic-group-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+    padding-left: 12px;
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Subgroups bucket "Built-in" items by their final path segment, e.g. "list_parameters (7)" */
+.generic-subgroup {
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: default;
+    display: block;
+}
+
+.generic-subgroup .generic-group-summary {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.generic-subgroup .generic-group-label {
+    text-transform: none;
+    letter-spacing: normal;
+}
 
 /* --- Viewport Controls Overlay (Bottom Left) --- */
 .controls-overlay {
@@ -689,6 +810,24 @@ header.glass-panel {
     overflow: hidden;
 }
 
+/* "Live Data" section header above the per-topic history groups */
+.live-data-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.live-data-header h3 {
+    flex: 1;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 .history-groups {
     display: flex;
     flex-direction: column;
@@ -713,15 +852,20 @@ header.glass-panel {
     background: rgba(255, 255, 255, 0.03);
 }
 
-.history-topic-header.static {
-    cursor: default;
+.history-topic-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    margin-top: 2px;
+    transition: transform 0.2s ease;
 }
 
-.history-topic-header.static:hover {
-    background: transparent;
+.history-topic-group[open] > .history-topic-header .history-topic-chevron {
+    transform: rotate(90deg);
 }
 
 .history-topic-name {
+    flex: 1;
     font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--text-primary);
@@ -806,8 +950,7 @@ header.glass-panel {
     gap: 10px;
 }
 
-.data-viewer-title,
-.topic-io-title {
+.data-viewer-title {
     font-size: 0.8rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -821,8 +964,8 @@ header.glass-panel {
 }
 
 .entity-info-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: 10px;
     margin-bottom: 12px;
 }
@@ -837,55 +980,63 @@ header.glass-panel {
     gap: 10px;
 }
 
+/* Collapsible category card (Publisher/Subscriber/Service/Client/Action, etc.) */
+.entity-info-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.entity-info-summary::-webkit-details-marker {
+    display: none;
+}
+
+.entity-info-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+.entity-info-card[open] .entity-info-chevron {
+    transform: rotate(90deg);
+}
+
 .entity-info-title {
+    flex: 1;
     font-size: 0.8rem;
     font-weight: 700;
     text-transform: uppercase;
     color: var(--text-secondary);
 }
 
+.entity-info-count {
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 10px;
+    color: var(--text-secondary);
+}
+
 .entity-info-list {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.topic-io-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.topic-io-card,
-.history-topic-flat {
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    overflow: hidden;
-}
-
-.topic-io-card {
-    padding: 12px;
-    display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
 }
 
-.topic-io-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.topic-io-chip {
+.entity-info-row {
     font-family: var(--font-mono);
     font-size: 0.72rem;
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 999px;
+    border-radius: 6px;
     padding: 4px 8px;
+    overflow-wrap: anywhere;
 }
 
 /* --- Resume Overlay Button --- */
