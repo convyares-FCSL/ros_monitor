@@ -1,0 +1,26 @@
+from dataclasses import dataclass
+
+
+DEFAULT_HTTP_PORT = 8080
+DEFAULT_WS_PORT = 8765
+DEFAULT_WS_HOST = "0.0.0.0"
+DEFAULT_RATE_LIMIT_HZ = 10.0
+
+HEAVY_MESSAGE_TYPES = {
+    "sensor_msgs/msg/Image",
+    "sensor_msgs/msg/CompressedImage",
+    "sensor_msgs/msg/PointCloud2",
+    "sensor_msgs/msg/LaserScan",
+    "nav_msgs/msg/OccupancyGrid",
+}
+
+
+@dataclass(slots=True)
+class BridgeConfig:
+    frontend_dir: str
+    http_port: int = DEFAULT_HTTP_PORT
+    ws_port: int = DEFAULT_WS_PORT
+    ws_host: str = DEFAULT_WS_HOST
+    rate_limit_hz: float = DEFAULT_RATE_LIMIT_HZ
+    sim_mode: bool = False
+

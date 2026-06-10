@@ -1,0 +1,37 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${workspaceFolder}/.vscode/browse.vc.db",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/ecm/ros2_ws_tutorial/install/lesson_08_executors_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_06_lifecycle_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_05_parameters_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_04_service_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_03_subscriber_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_02_publisher_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/utils_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/action_msgs/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/unique_identifier_msgs/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/service_msgs/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/rosgraph_msgs/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/rcl_interfaces/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lifecycle_msgs/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_interfaces/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_01_node_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/lesson_00_bootstrap_cpp/include/**",
+        "/home/ecm/ros2_ws_tutorial/install/builtin_interfaces/include/**",
+        "/opt/ros/jazzy/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ros2",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}

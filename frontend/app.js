@@ -39,6 +39,39 @@ const NODE_TYPES = {
     ACTION: 'action'
 };
 
+const TYPE_VISIBILITY = {
+    [NODE_TYPES.NODE]: true,
+    [NODE_TYPES.TOPIC]: true,
+    [NODE_TYPES.SERVICE]: true,
+    [NODE_TYPES.ACTION]: true
+};
+
+const SECTION_COLLAPSE = {
+    [NODE_TYPES.NODE]: false,
+    [NODE_TYPES.TOPIC]: false,
+    [NODE_TYPES.SERVICE]: false,
+    [NODE_TYPES.ACTION]: false
+};
+
+const itemVisibility = {};
+const messageHistory = {};
+const MAX_HISTORY_PER_TOPIC = 10;
+const genericTopicIds = new Set(['topic:/rosout']);
+const topicOrderIndex = {};
+let nextTopicOrderIndex = 0;
+const inspectorGroupState = {};
+let selectedHistoryEntryId = null;
+let historyEntrySequence = 0;
+let latestGraphData = null;
+let pendingGraphData = null;
+let isScenePaused = false;
+let selectedEntityId = null;
+let isolatedVertexIds = null;
+let isolatedRootId = null;
+let contextMenuTargetId = null;
+let rightClickStart = null;
+let rightClickMoved = false;
+
 // Colors matching style.css (vibrant HSL palettes)
 const COLORS = {
     [NODE_TYPES.NODE]: 0x06b6d4,      // Cyan
@@ -49,22 +82,36 @@ const COLORS = {
 };
 
 // Raycasting (for mouse selection of particles)
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+let raycaster = null;
+let mouse = null;
 
 // --- Init Application ---
 window.addEventListener('load', () => {
-    initThree();
     initWebSocket();
     setupUIEventListeners();
-    animate();
-    
-    // Refresh Lucide Icons
-    lucide.createIcons();
+
+    try {
+        initThree();
+        animate();
+    } catch (err) {
+        logger(`3D initialization failed: ${err.message}`, true);
+        showRuntimeBanner(`3D initialization failed: ${err.message}`);
+    }
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
 });
 
 // --- Initialize Three.js Scene ---
 function initThree() {
+    if (!window.THREE) {
+        throw new Error('Three.js not loaded');
+    }
+
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
     // 1. Scene Setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.BG_DARK);
@@ -111,6 +158,10 @@ function initThree() {
     // 8. Event Listeners
     window.addEventListener('resize', onWindowResize);
     window.addEventListener('click', onSceneClick);
+    window.addEventListener('contextmenu', onSceneContextMenu);
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
 }
 
 // Create a starfield background
@@ -182,7 +233,10 @@ function initWebSocket() {
             if (msg.type === 'graph_update') {
                 handleGraphUpdate(msg.data);
             } else if (msg.type === 'message_event') {
-                handleMessageEvent(msg.data);
+                handleMessageEvent({
+                    ...msg.data,
+                    timestamp: msg.timestamp
+                });
             }
         } catch (err) {
             console.error("Error processing websocket message:", err);
@@ -207,6 +261,12 @@ function initWebSocket() {
 
 // --- Handle Graph Updates (Topological Sync) ---
 function handleGraphUpdate(data) {
+    if (isScenePaused) {
+        pendingGraphData = data;
+        return;
+    }
+
+    latestGraphData = data;
     const activeIds = new Set();
 
     // Helper to add/sync vertex in layout
@@ -240,10 +300,13 @@ function handleGraphUpdate(data) {
                 velocity: new THREE.Vector3(0, 0, 0),
                 connections: new Set()
             };
+            mesh.userData.vertexId = id;
         } else {
             // Keep reference to existing
             vertices[id].type = type; // safety
         }
+
+        applyVertexVisibility(vertices[id]);
     }
 
     // 1. Process Nodes
@@ -358,8 +421,18 @@ function handleGraphUpdate(data) {
         });
     });
 
+    if (isolatedRootId) {
+        isolatedVertexIds = buildIsolationSet(isolatedRootId);
+    }
+    refreshLinkVisibility();
+    refreshParticleVisibility();
+
     // 8. Update HUD Counter Lists
     updateHUDStats(data);
+
+    if (selectedEntityId && vertices[selectedEntityId]) {
+        inspectEntity(vertices[selectedEntityId]);
+    }
 }
 
 // Create geometrical representation based on graph category
@@ -455,6 +528,12 @@ function createLabelSprite(text, colorHex) {
 
 // --- Message Events (Particle Animations along Directed Edges) ---
 function handleMessageEvent(data) {
+    recordMessageHistory(data);
+
+    if (isScenePaused) {
+        return;
+    }
+
     messageCount++;
     document.getElementById('stat-bandwidth').innerText = formatBandwidth(currentBandwidth);
 
@@ -468,11 +547,15 @@ function handleMessageEvent(data) {
         if (topicName.includes('/_action/')) {
             const baseAction = topicName.split('/_action/')[0];
             const actionVertex = vertices[`action:${baseAction}`];
-            if (actionVertex) {
+            if (actionVertex && isVertexVisible(actionVertex.id)) {
                 // Animate to/from Action Node!
                 spawnActionParticle(actionVertex, topicName, data);
             }
         }
+        return;
+    }
+
+    if (!isVertexVisible(topicId)) {
         return;
     }
 
@@ -525,6 +608,16 @@ function spawnActionParticle(actionVertex, topicName, data) {
 
 // Helper to spawn 3D mesh particle
 function createParticle(startNode, midNode, endNode, eventData) {
+    if (
+        !startNode ||
+        !midNode ||
+        !isVertexVisible(startNode.id) ||
+        !isVertexVisible(midNode.id) ||
+        (endNode && !isVertexVisible(endNode.id))
+    ) {
+        return;
+    }
+
     // Unique color per topic/type
     let color = COLORS[NODE_TYPES.TOPIC];
     if (eventData.topic.includes('/_action/')) {
@@ -550,6 +643,7 @@ function createParticle(startNode, midNode, endNode, eventData) {
 
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(startNode.pos);
+    mesh.visible = true;
     scene.add(mesh);
 
     // Particle travels along paths. Speed is proportional to data rate (frequency)
@@ -658,59 +752,61 @@ function updateGraphLayout() {
 function animate() {
     requestAnimationFrame(animate);
 
-    // 1. Physics update for layout
-    updateGraphLayout();
+    if (!isScenePaused) {
+        // 1. Physics update for layout
+        updateGraphLayout();
 
-    // 2. Telemetry Particle updates
-    for (let i = activeParticles.length - 1; i >= 0; i--) {
-        const p = activeParticles[i];
-        
-        if (p.paused) continue; // Freeze if clicked/inspected
+        // 2. Telemetry Particle updates
+        for (let i = activeParticles.length - 1; i >= 0; i--) {
+            const p = activeParticles[i];
 
-        if (p.leg === 1) {
-            // Leg 1: Start -> Mid
-            p.progress += p.speed;
-            if (p.progress >= 1.0) {
-                if (p.endNode) {
-                    p.leg = 2;
-                    p.progress = 0.0;
+            if (p.paused) continue; // Freeze if clicked/inspected
+
+            if (p.leg === 1) {
+                // Leg 1: Start -> Mid
+                p.progress += p.speed;
+                if (p.progress >= 1.0) {
+                    if (p.endNode) {
+                        p.leg = 2;
+                        p.progress = 0.0;
+                    } else {
+                        // Journey completed (no subscriber)
+                        scene.remove(p.mesh);
+                        p.mesh.geometry.dispose();
+                        p.mesh.material.dispose();
+                        activeParticles.splice(i, 1);
+                        continue;
+                    }
                 } else {
-                    // Journey completed (no subscriber)
+                    p.mesh.position.lerpVectors(p.startNode.pos, p.midNode.pos, p.progress);
+                }
+            }
+
+            if (p.leg === 2) {
+                // Leg 2: Mid -> End
+                p.progress += p.speed;
+                if (p.progress >= 1.0) {
+                    // Journey completed
                     scene.remove(p.mesh);
                     p.mesh.geometry.dispose();
                     p.mesh.material.dispose();
                     activeParticles.splice(i, 1);
-                    continue;
+                } else {
+                    p.mesh.position.lerpVectors(p.midNode.pos, p.endNode.pos, p.progress);
                 }
-            } else {
-                p.mesh.position.lerpVectors(p.startNode.pos, p.midNode.pos, p.progress);
-            }
-        } 
-        
-        if (p.leg === 2) {
-            // Leg 2: Mid -> End
-            p.progress += p.speed;
-            if (p.progress >= 1.0) {
-                // Journey completed
-                scene.remove(p.mesh);
-                p.mesh.geometry.dispose();
-                p.mesh.material.dispose();
-                activeParticles.splice(i, 1);
-            } else {
-                p.mesh.position.lerpVectors(p.midNode.pos, p.endNode.pos, p.progress);
             }
         }
-    }
 
-    // 3. Spin individual node cylinders/boxes slightly for dynamic feel
-    Object.values(vertices).forEach(v => {
-        if (v.type === NODE_TYPES.NODE) {
-            v.mesh.rotation.y += 0.01;
-        } else if (v.type === NODE_TYPES.SERVICE || v.type === NODE_TYPES.ACTION) {
-            v.mesh.rotation.x += 0.01;
-            v.mesh.rotation.y += 0.01;
-        }
-    });
+        // 3. Spin individual node cylinders/boxes slightly for dynamic feel
+        Object.values(vertices).forEach(v => {
+            if (v.type === NODE_TYPES.NODE) {
+                v.mesh.rotation.y += 0.01;
+            } else if (v.type === NODE_TYPES.SERVICE || v.type === NODE_TYPES.ACTION) {
+                v.mesh.rotation.x += 0.01;
+                v.mesh.rotation.y += 0.01;
+            }
+        });
+    }
 
     // 4. Render Updates
     controls.update();
@@ -722,6 +818,8 @@ function onSceneClick(event) {
     // Only raycast if the click occurred on the 3D canvas (not on HUD overlay panels)
     if (event.target !== renderer.domElement) return;
 
+    hideContextMenu();
+
     // Calculate mouse position in normalized device coordinates
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -729,22 +827,92 @@ function onSceneClick(event) {
     raycaster.setFromCamera(mouse, camera);
 
     // Filter mesh targets from our active particles list
-    const targets = activeParticles.map(p => p.mesh);
-    const intersects = raycaster.intersectObjects(targets);
+    const particleTargets = activeParticles.map(p => p.mesh);
+    const particleIntersects = raycaster.intersectObjects(particleTargets);
 
-    if (intersects.length > 0) {
+    if (particleIntersects.length > 0) {
         // Find matching particle
-        const hitMesh = intersects[0].object;
+        const hitMesh = particleIntersects[0].object;
         const clickedParticle = activeParticles.find(p => p.mesh === hitMesh);
         
         if (clickedParticle) {
             inspectParticle(clickedParticle);
+            return;
         }
+    }
+
+    const vertexTargets = Object.values(vertices).filter((vertex) => vertex.mesh.visible).map((vertex) => vertex.mesh);
+    const vertexIntersects = raycaster.intersectObjects(vertexTargets);
+    if (vertexIntersects.length > 0) {
+        const hitVertexId = vertexIntersects[0].object.userData.vertexId;
+        if (hitVertexId && vertices[hitVertexId]) {
+            inspectEntity(vertices[hitVertexId]);
+        }
+    }
+}
+
+function onSceneContextMenu(event) {
+    if (!renderer || event.target !== renderer.domElement) {
+        hideContextMenu();
+        return;
+    }
+
+    event.preventDefault();
+
+    if (rightClickMoved) {
+        hideContextMenu();
+        return;
+    }
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
+    const vertexTargets = Object.values(vertices).filter((vertex) => vertex.mesh.visible).map((vertex) => vertex.mesh);
+    const vertexIntersects = raycaster.intersectObjects(vertexTargets);
+    if (vertexIntersects.length === 0) {
+        hideContextMenu();
+        return;
+    }
+
+    const hitVertexId = vertexIntersects[0].object.userData.vertexId;
+    if (hitVertexId && vertices[hitVertexId]) {
+        showContextMenu(hitVertexId, event.clientX, event.clientY);
+    }
+}
+
+function onPointerDown(event) {
+    if (!renderer || event.target !== renderer.domElement || event.button !== 2) {
+        return;
+    }
+
+    rightClickStart = { x: event.clientX, y: event.clientY };
+    rightClickMoved = false;
+}
+
+function onPointerMove(event) {
+    if (!rightClickStart) {
+        return;
+    }
+
+    const dx = event.clientX - rightClickStart.x;
+    const dy = event.clientY - rightClickStart.y;
+    if (Math.hypot(dx, dy) > 6) {
+        rightClickMoved = true;
+    }
+}
+
+function onPointerUp(event) {
+    if (event.button === 2) {
+        setTimeout(() => {
+            rightClickStart = null;
+            rightClickMoved = false;
+        }, 0);
     }
 }
 
 // Inspect and Pause message particle
 function inspectParticle(particle) {
+    selectedEntityId = null;
     // Unpause previous
     if (pausedParticle) {
         pausedParticle.paused = false;
@@ -819,23 +987,373 @@ function inspectParticle(particle) {
     `;
 
     footer.style.display = 'block';
+    document.getElementById('inspector-title').innerHTML = '<i data-lucide="search" class="icon-inline"></i> Packet Inspector';
     
     // Open panel drawer
     document.getElementById('inspector-panel').classList.remove('collapsed');
     
-    lucide.createIcons();
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function inspectEntity(vertex) {
+    releasePausedParticle();
+    selectedEntityId = vertex.id;
+
+    const content = document.getElementById('inspector-content');
+    const footer = document.getElementById('inspector-footer');
+    const groups = getEntityHistoryGroups(vertex);
+    const selectedEntry = resolveSelectedHistoryEntry(groups);
+
+    const subtitle = {
+        [NODE_TYPES.NODE]: 'Node Activity',
+        [NODE_TYPES.TOPIC]: 'Topic Activity',
+        [NODE_TYPES.ACTION]: 'Action Activity',
+        [NODE_TYPES.SERVICE]: 'Service Activity'
+    }[vertex.type] || 'Entity Activity';
+
+    document.getElementById('inspector-title').innerHTML = `<i data-lucide="search" class="icon-inline"></i> ${subtitle}`;
+
+    let groupsHtml = '';
+    if (groups.length === 0) {
+        groupsHtml = renderEntityInspector(vertex, groups, selectedEntry);
+    } else {
+        groupsHtml = renderEntityInspector(vertex, groups, selectedEntry);
+    }
+
+    content.innerHTML = `
+        <div class="inspector-header-info">
+            <div class="inspector-row">
+                <span class="lbl">Selection</span>
+                <span class="val text-cyan">${vertex.name}</span>
+            </div>
+            <div class="inspector-row">
+                <span class="lbl">Type</span>
+                <span class="val badge">${vertex.type}</span>
+            </div>
+            <div class="inspector-row">
+                <span class="lbl">Recent Topics</span>
+                <span class="val">${groups.length}</span>
+            </div>
+        </div>
+        ${groupsHtml}
+    `;
+
+    footer.style.display = 'none';
+    document.getElementById('inspector-panel').classList.remove('collapsed');
+    bindInspectorInteractions();
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function renderEntityInspector(vertex, groups, selectedEntry) {
+    switch (vertex.type) {
+        case NODE_TYPES.NODE:
+            return renderNodeInspector(vertex, groups, selectedEntry);
+        case NODE_TYPES.TOPIC:
+            return renderTopicInspector(vertex, groups[0] || null, selectedEntry);
+        case NODE_TYPES.ACTION:
+            return renderActionInspector(vertex, groups, selectedEntry);
+        case NODE_TYPES.SERVICE:
+            return renderServiceInspector(vertex, groups, selectedEntry);
+        default:
+            return renderGroupedInspector(vertex, groups, selectedEntry);
+    }
+}
+
+function renderGroupedInspector(vertex, groups, selectedEntry) {
+    const selectionState = getInspectorGroupState(vertex.id);
+    const groupsHtml = groups.map((group) => {
+        const expanded = selectionState[group.topic] === true;
+        const entriesHtml = group.entries.map((entry) => renderHistoryRow(entry, selectedEntry)).join('');
+        return `
+            <details class="history-topic-group" data-topic-name="${group.topic}" ${expanded ? 'open' : ''}>
+                <summary class="history-topic-header">
+                    <div class="history-topic-name">${group.topic}</div>
+                    <div class="history-topic-count">${group.entries.length} entr${group.entries.length === 1 ? 'y' : 'ies'}</div>
+                </summary>
+                <div class="history-topic-body">
+                    <div class="history-entry-list">
+                        ${entriesHtml}
+                    </div>
+                </div>
+            </details>
+        `;
+    }).join('');
+
+    return `
+        <div class="history-groups">${groupsHtml}</div>
+        ${renderDataViewer(selectedEntry)}
+    `;
+}
+
+function renderNodeInspector(vertex, groups, selectedEntry) {
+    const nodeTopics = latestGraphData?.topics?.filter((topic) => topic.publishers.includes(vertex.name) || topic.subscribers.includes(vertex.name)) || [];
+    const publishes = nodeTopics.filter((topic) => topic.publishers.includes(vertex.name)).map((topic) => topic.name);
+    const subscribes = nodeTopics.filter((topic) => topic.subscribers.includes(vertex.name)).map((topic) => topic.name);
+    const actionLinks = latestGraphData?.actions?.filter((action) => action.servers.includes(vertex.name) || action.clients.includes(vertex.name)) || [];
+
+    return `
+        <section class="entity-info-grid">
+            ${renderInfoCard('Publishes', publishes)}
+            ${renderInfoCard('Subscribes', subscribes)}
+            ${renderInfoCard('Actions', actionLinks.map((action) => action.name))}
+        </section>
+        ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `<div class="history-empty">No recent message history for this node yet.</div>`}
+    `;
+}
+
+function renderTopicInspector(vertex, group, selectedEntry) {
+    const topicData = latestGraphData?.topics?.find((topic) => topic.name === vertex.name);
+    const publishers = topicData?.publishers || [];
+    const subscribers = topicData?.subscribers || [];
+    const entriesHtml = group ? group.entries.map((entry) => renderHistoryRow(entry, selectedEntry)).join('') : '<div class="history-empty">No recent message history for this topic yet.</div>';
+
+    return `
+        <section class="topic-io-grid">
+            <div class="topic-io-card">
+                <div class="topic-io-title">Inputs</div>
+                <div class="topic-io-list">
+                    ${publishers.length ? publishers.map((publisher) => `<div class="topic-io-chip">${publisher}</div>`).join('') : '<div class="history-empty">No publishers</div>'}
+                </div>
+            </div>
+            <div class="topic-io-card">
+                <div class="topic-io-title">Outputs</div>
+                <div class="topic-io-list">
+                    ${subscribers.length ? subscribers.map((subscriber) => `<div class="topic-io-chip">${subscriber}</div>`).join('') : '<div class="history-empty">No subscribers</div>'}
+                </div>
+            </div>
+        </section>
+        <section class="history-topic-flat">
+            <div class="history-topic-header static">
+                <div class="history-topic-name">${group ? group.topic : vertex.name}</div>
+                <div class="history-topic-count">${group ? `${group.entries.length} entr${group.entries.length === 1 ? 'y' : 'ies'}` : '0 entries'}</div>
+            </div>
+            <div class="history-topic-body">
+                <div class="history-entry-list">
+                    ${entriesHtml}
+                </div>
+            </div>
+        </section>
+        ${renderDataViewer(selectedEntry)}
+    `;
+}
+
+function renderActionInspector(vertex, groups, selectedEntry) {
+    const actionData = latestGraphData?.actions?.find((action) => action.name === vertex.name);
+    const servers = actionData?.servers || [];
+    const clients = actionData?.clients || [];
+
+    return `
+        <section class="entity-info-grid">
+            ${renderInfoCard('Servers', servers)}
+            ${renderInfoCard('Clients', clients)}
+            ${renderInfoCard('Action Topics', groups.map((group) => group.topic))}
+        </section>
+        ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `<div class="history-empty">No recent action traffic for this selection yet.</div>`}
+    `;
+}
+
+function renderServiceInspector(vertex, groups, selectedEntry) {
+    const serviceData = latestGraphData?.services?.find((service) => service.name === vertex.name);
+    const servers = serviceData?.servers || [];
+    const serviceTypes = serviceData?.types || [];
+
+    return `
+        <section class="entity-info-grid">
+            ${renderInfoCard('Servers', servers)}
+            ${renderInfoCard('Service Types', serviceTypes)}
+            ${renderInfoCard('Related Traffic', groups.map((group) => group.topic))}
+        </section>
+        ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `
+            <section class="data-viewer-panel">
+                <div class="data-viewer-title">Service Inspector</div>
+                <div class="history-empty">This service has no recent message history in the current bridge stream. Service topology is still shown above.</div>
+            </section>
+        `}
+    `;
+}
+
+function renderInfoCard(title, items) {
+    return `
+        <div class="entity-info-card">
+            <div class="entity-info-title">${title}</div>
+            <div class="entity-info-list">
+                ${items && items.length ? items.map((item) => `<div class="topic-io-chip">${item}</div>`).join('') : '<div class="history-empty">None</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function renderHistoryRow(entry, selectedEntry) {
+    const date = new Date(entry.timestamp * 1000);
+    const timeStr = `${date.toLocaleTimeString()}.${String(Math.floor((entry.timestamp % 1) * 1000)).padStart(3, '0')}`;
+    const selected = selectedEntry && selectedEntry.id === entry.id;
+
+    return `
+        <button class="history-entry-row ${selected ? 'selected' : ''}" data-entry-id="${entry.id}">
+            <span class="history-entry-meta">${timeStr}</span>
+            <span class="history-entry-meta">${entry.size_bytes} Bytes</span>
+            <span class="history-entry-type">${entry.msg_type}</span>
+        </button>
+    `;
+}
+
+function renderDataViewer(selectedEntry) {
+    if (!selectedEntry) {
+        return `
+            <section class="data-viewer-panel">
+                <div class="data-viewer-title">Payload Viewer</div>
+                <div class="history-empty">Select an event row to inspect its payload.</div>
+            </section>
+        `;
+    }
+
+    const date = new Date(selectedEntry.timestamp * 1000);
+    const timeStr = `${date.toLocaleTimeString()}.${String(Math.floor((selectedEntry.timestamp % 1) * 1000)).padStart(3, '0')}`;
+    const payloadHtml = selectedEntry.dropped_payload
+        ? `
+            <div class="trimmed-warning">
+                <i data-lucide="alert-triangle"></i>
+                <div>
+                    <strong>Heavy Payload Trimmed</strong><br>
+                    Binary data was dropped from the frontend payload stream.
+                </div>
+            </div>
+        `
+        : `<pre class="json-container">${JSON.stringify(selectedEntry.payload, null, 2)}</pre>`;
+
+    return `
+        <section class="data-viewer-panel">
+            <div class="data-viewer-title">Payload Viewer</div>
+            <div class="data-viewer-meta">
+                <span class="history-entry-meta">${selectedEntry.topic}</span>
+                <span class="history-entry-meta">${timeStr}</span>
+                <span class="history-entry-meta">${selectedEntry.size_bytes} Bytes</span>
+            </div>
+            ${payloadHtml}
+        </section>
+    `;
+}
+
+function bindInspectorInteractions() {
+    document.querySelectorAll('.history-topic-group').forEach((details) => {
+        details.addEventListener('toggle', () => {
+            if (!selectedEntityId) {
+                return;
+            }
+            const topicName = details.dataset.topicName;
+            getInspectorGroupState(selectedEntityId)[topicName] = details.open;
+        });
+    });
+
+    document.querySelectorAll('.history-entry-row').forEach((button) => {
+        button.addEventListener('click', () => {
+            selectedHistoryEntryId = Number(button.dataset.entryId);
+            if (selectedEntityId && vertices[selectedEntityId]) {
+                inspectEntity(vertices[selectedEntityId]);
+            }
+        });
+    });
+}
+
+function resolveSelectedHistoryEntry(groups) {
+    const allEntries = groups.flatMap((group) => group.entries);
+    if (allEntries.length === 0) {
+        selectedHistoryEntryId = null;
+        return null;
+    }
+
+    if (selectedHistoryEntryId !== null) {
+        const existing = allEntries.find((entry) => entry.id === selectedHistoryEntryId);
+        if (existing) {
+            return existing;
+        }
+    }
+
+    selectedHistoryEntryId = allEntries[0].id;
+    return allEntries[0];
+}
+
+function getInspectorGroupState(selectionId) {
+    if (!inspectorGroupState[selectionId]) {
+        inspectorGroupState[selectionId] = {};
+    }
+    return inspectorGroupState[selectionId];
+}
+
+function getEntityHistoryGroups(vertex) {
+    if (!latestGraphData) {
+        return [];
+    }
+
+    const topicNames = [];
+    const topicNameSet = new Set();
+
+    function addTopicName(topicName) {
+        if (!topicNameSet.has(topicName)) {
+            topicNameSet.add(topicName);
+            topicNames.push(topicName);
+        }
+    }
+
+    if (vertex.type === NODE_TYPES.TOPIC) {
+        addTopicName(vertex.name);
+    }
+
+    if (vertex.type === NODE_TYPES.NODE) {
+        latestGraphData.topics.forEach((topic) => {
+            if (topic.publishers.includes(vertex.name) || topic.subscribers.includes(vertex.name)) {
+                addTopicName(topic.name);
+            }
+        });
+
+        latestGraphData.actions.forEach((action) => {
+            if (action.servers.includes(vertex.name) || action.clients.includes(vertex.name)) {
+                Object.keys(messageHistory)
+                    .filter((topicName) => topicName.startsWith(`${action.name}/_action/`))
+                    .sort((a, b) => (topicOrderIndex[a] ?? Number.MAX_SAFE_INTEGER) - (topicOrderIndex[b] ?? Number.MAX_SAFE_INTEGER))
+                    .forEach((topicName) => addTopicName(topicName));
+            }
+        });
+    }
+
+    if (vertex.type === NODE_TYPES.ACTION) {
+        Object.keys(messageHistory)
+            .filter((topicName) => topicName.startsWith(`${vertex.name}/_action/`))
+            .sort((a, b) => (topicOrderIndex[a] ?? Number.MAX_SAFE_INTEGER) - (topicOrderIndex[b] ?? Number.MAX_SAFE_INTEGER))
+            .forEach((topicName) => addTopicName(topicName));
+    }
+
+    const orderedTopicNames = topicNames.slice().sort((a, b) => (topicOrderIndex[a] ?? Number.MAX_SAFE_INTEGER) - (topicOrderIndex[b] ?? Number.MAX_SAFE_INTEGER));
+    const groups = orderedTopicNames
+        .map((topicName) => ({
+            topic: topicName,
+            entries: (messageHistory[topicName] || []).slice().reverse()
+        }))
+        .filter((group) => group.entries.length > 0 && isTopicHistoryVisible(group.topic));
+
+    return groups;
 }
 
 // Resume paused particle and close drawer
 function resumeTelemetry() {
+    releasePausedParticle();
+    selectedEntityId = null;
+    selectedHistoryEntryId = null;
+    document.getElementById('inspector-panel').classList.add('collapsed');
+}
+
+function releasePausedParticle() {
     if (pausedParticle) {
         pausedParticle.paused = false;
         pausedParticle.mesh.scale.set(1.0, 1.0, 1.0);
         pausedParticle.mesh.material.wireframe = false;
         pausedParticle = null;
     }
-    
-    document.getElementById('inspector-panel').classList.add('collapsed');
 }
 
 // --- UI Updates & Subscriptions ---
@@ -844,19 +1362,20 @@ function updateHUDStats(data) {
     document.getElementById('stat-topic-count').innerText = data.topics.length;
     document.getElementById('stat-action-count').innerText = data.actions.length;
     
-    document.getElementById('count-nodes').innerText = data.nodes.length;
-    document.getElementById('count-topics').innerText = data.topics.length;
-    document.getElementById('count-actions').innerText = data.actions.length;
-    document.getElementById('count-services').innerText = data.services.length;
+    document.getElementById('count-nodes').innerText = formatSectionCount(data.nodes, NODE_TYPES.NODE);
+    document.getElementById('count-topics').innerText = formatSectionCount(data.topics, NODE_TYPES.TOPIC);
+    document.getElementById('count-actions').innerText = formatSectionCount(data.actions, NODE_TYPES.ACTION);
+    document.getElementById('count-services').innerText = formatSectionCount(data.services, NODE_TYPES.SERVICE);
 
     // Populate Sidebar Lists
-    populateList('node-list', data.nodes, 'node', 'text-cyan');
-    populateList('topic-list', data.topics, 'git-commit', 'text-orange');
-    populateList('action-list', data.actions, 'layers', 'text-purple');
-    populateList('service-list', data.services, 'arrow-right-left', 'text-green');
+    populateList('node-list', data.nodes, NODE_TYPES.NODE);
+    populateList('topic-list', data.topics, NODE_TYPES.TOPIC);
+    populateList('action-list', data.actions, NODE_TYPES.ACTION);
+    populateList('service-list', data.services, NODE_TYPES.SERVICE);
+    refreshSectionToggles();
 }
 
-function populateList(elementId, items, iconName, colorClass) {
+function populateList(elementId, items, entityType) {
     const list = document.getElementById(elementId);
     list.innerHTML = '';
     
@@ -868,26 +1387,46 @@ function populateList(elementId, items, iconName, colorClass) {
     items.forEach(item => {
         const li = document.createElement('li');
         const name = item.name;
+        const vertexId = `${entityType}:${name}`;
+        const visible = isEntityDisplayed(entityType, vertexId);
+
+        li.classList.toggle('is-hidden', !visible);
         
         li.innerHTML = `
-            <span class="li-name">${name}</span>
-            <i data-lucide="${iconName}" class="section-icon ${colorClass}"></i>
+            <span class="list-item-main">
+                <span class="li-name">${name}</span>
+            </span>
+            <button class="item-toggle ${visible ? '' : 'is-off'}" data-vertex-id="${vertexId}" title="${visible ? 'Hide' : 'Show'} ${name}" aria-label="${visible ? 'Hide' : 'Show'} ${name}">
+                <i data-lucide="${visible ? 'eye' : 'eye-off'}"></i>
+            </button>
         `;
         
         // Add click listener to center camera on vertex
         li.onclick = () => {
-            const vertexId = `${elementId.split('-')[0]}:${name}`;
             const vertex = vertices[vertexId];
             if (vertex) {
                 // Smooth camera transition using OrbitControls target
                 gsapScrollTo(vertex.pos);
+                inspectEntity(vertex);
             }
+        };
+
+        li.querySelector('.item-toggle').onclick = (event) => {
+            event.stopPropagation();
+            toggleItemVisibility(vertexId);
+        };
+
+        li.oncontextmenu = (event) => {
+            event.preventDefault();
+            showContextMenu(vertexId, event.clientX, event.clientY);
         };
         
         list.appendChild(li);
     });
     
-    lucide.createIcons();
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
 }
 
 // Camera transition helper
@@ -936,6 +1475,10 @@ function updateConnStatus(statusClass, label) {
 }
 
 function clearGraph() {
+    if (!scene) {
+        return;
+    }
+
     // Clean up Three.js objects
     Object.keys(vertices).forEach(id => {
         scene.remove(vertices[id].mesh);
@@ -952,6 +1495,9 @@ function clearGraph() {
         scene.remove(p.mesh);
     });
     activeParticles.length = 0;
+    selectedEntityId = null;
+    hideContextMenu();
+    document.getElementById('inspector-panel').classList.add('collapsed');
 }
 
 // --- UI Controls Event Listeners ---
@@ -967,7 +1513,9 @@ function setupUIEventListeners() {
         } else {
             icon.setAttribute('data-lucide', 'chevron-left');
         }
-        lucide.createIcons();
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+        }
     });
 
     // 2. Recenter Camera
@@ -975,6 +1523,20 @@ function setupUIEventListeners() {
         gsapScrollTo(new THREE.Vector3(0, 0, 0));
         // Reset zoom
         camera.position.set(0, 15, 25);
+    });
+
+    document.querySelectorAll('.section-toggle').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleTypeVisibility(button.dataset.filterType);
+        });
+    });
+
+    document.querySelectorAll('.section-collapse').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleSectionCollapsed(button.dataset.sectionType);
+        });
     });
 
     // 3. Toggle Simulation (Sends instruction to WebSocket server if connected)
@@ -993,8 +1555,52 @@ function setupUIEventListeners() {
             updateConnStatus(socket && socket.readyState === WebSocket.OPEN ? 'connected' : 'disconnected', socket && socket.readyState === WebSocket.OPEN ? 'CONNECTED' : 'DISCONNECTED');
             stopLocalSimulation();
         }
-        lucide.createIcons();
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+        }
     });
+
+    document.getElementById('btn-toggle-pause').addEventListener('click', () => {
+        setScenePaused(!isScenePaused);
+    });
+
+    document.getElementById('ctx-hide-item').addEventListener('click', () => {
+        if (contextMenuTargetId) {
+            itemVisibility[contextMenuTargetId] = false;
+            updateVisibilityState();
+            hideContextMenu();
+        }
+    });
+
+    document.getElementById('ctx-isolate-item').addEventListener('click', () => {
+        if (contextMenuTargetId) {
+            isolateFromVertex(contextMenuTargetId);
+            hideContextMenu();
+        }
+    });
+
+    document.getElementById('ctx-toggle-generic').addEventListener('click', () => {
+        if (contextMenuTargetId && isTopicVertexId(contextMenuTargetId)) {
+            toggleGenericTopic(contextMenuTargetId);
+            hideContextMenu();
+        }
+    });
+
+    document.getElementById('ctx-clear-isolation').addEventListener('click', () => {
+        clearIsolation();
+        hideContextMenu();
+    });
+
+    document.addEventListener('click', (event) => {
+        const menu = document.getElementById('graph-context-menu');
+        if (menu && !menu.contains(event.target)) {
+            hideContextMenu();
+        }
+    });
+
+    updatePauseButton();
+    refreshSectionToggles();
+    refreshSectionCollapseButtons();
 
     // 4. Close Inspector
     document.getElementById('close-inspector').addEventListener('click', resumeTelemetry);
@@ -1014,6 +1620,336 @@ function logger(msg, isError = false) {
         console.error(`[Bridge] ${msg}`);
     } else {
         console.log(`[Bridge] ${msg}`);
+    }
+}
+
+function showRuntimeBanner(message) {
+    let banner = document.getElementById('runtime-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'runtime-banner';
+        banner.style.position = 'fixed';
+        banner.style.right = '16px';
+        banner.style.bottom = '16px';
+        banner.style.zIndex = '50';
+        banner.style.maxWidth = '420px';
+        banner.style.padding = '12px 14px';
+        banner.style.border = '1px solid rgba(239, 68, 68, 0.45)';
+        banner.style.borderRadius = '8px';
+        banner.style.background = 'rgba(127, 29, 29, 0.88)';
+        banner.style.color = '#fee2e2';
+        banner.style.fontSize = '14px';
+        banner.style.lineHeight = '1.4';
+        banner.style.pointerEvents = 'none';
+        document.body.appendChild(banner);
+    }
+    banner.textContent = message;
+}
+
+function recordMessageHistory(data) {
+    if (topicOrderIndex[data.topic] === undefined) {
+        topicOrderIndex[data.topic] = nextTopicOrderIndex++;
+    }
+
+    if (!messageHistory[data.topic]) {
+        messageHistory[data.topic] = [];
+    }
+
+    messageHistory[data.topic].push({
+        id: ++historyEntrySequence,
+        topic: data.topic,
+        timestamp: data.timestamp,
+        msg_type: data.msg_type,
+        payload: data.payload,
+        dropped_payload: data.dropped_payload,
+        size_bytes: data.size_bytes
+    });
+
+    if (messageHistory[data.topic].length > MAX_HISTORY_PER_TOPIC) {
+        messageHistory[data.topic].shift();
+    }
+
+    if (selectedEntityId && vertices[selectedEntityId]) {
+        inspectEntity(vertices[selectedEntityId]);
+    }
+}
+
+function isTypeVisible(type) {
+    return TYPE_VISIBILITY[type] !== false;
+}
+
+function isItemVisible(id) {
+    if (Object.prototype.hasOwnProperty.call(itemVisibility, id)) {
+        return itemVisibility[id] !== false;
+    }
+
+    if (genericTopicIds.has(id)) {
+        return false;
+    }
+
+    return true;
+}
+
+function isEntityVisible(type, id) {
+    return isTypeVisible(type) && isItemVisible(id);
+}
+
+function isEntityDisplayed(type, id) {
+    return isEntityVisible(type, id) && (!isolatedVertexIds || isolatedVertexIds.has(id));
+}
+
+function isVertexVisible(id) {
+    const vertex = vertices[id];
+    if (!vertex) {
+        return isItemVisible(id) && (!isolatedVertexIds || isolatedVertexIds.has(id));
+    }
+
+    return isEntityDisplayed(vertex.type, id);
+}
+
+function formatSectionCount(items, entityType) {
+    const visibleCount = items.filter((item) => isEntityDisplayed(entityType, `${entityType}:${item.name}`)).length;
+    return visibleCount === items.length ? String(items.length) : `${visibleCount}/${items.length}`;
+}
+
+function applyVertexVisibility(vertex) {
+    const visible = isEntityDisplayed(vertex.type, vertex.id);
+    vertex.mesh.visible = visible;
+    vertex.sprite.visible = visible;
+}
+
+function refreshLinkVisibility() {
+    links.forEach((link) => {
+        link.lineMesh.visible = isVertexVisible(link.sourceId) && isVertexVisible(link.targetId);
+    });
+}
+
+function refreshParticleVisibility() {
+    activeParticles.forEach((particle) => {
+        particle.mesh.visible =
+            isVertexVisible(particle.startNode.id) &&
+            isVertexVisible(particle.midNode.id) &&
+            (!particle.endNode || isVertexVisible(particle.endNode.id));
+    });
+}
+
+function showContextMenu(vertexId, clientX, clientY) {
+    const menu = document.getElementById('graph-context-menu');
+    if (!menu) {
+        return;
+    }
+
+    contextMenuTargetId = vertexId;
+    menu.classList.remove('hidden');
+    const maxLeft = window.innerWidth - 196;
+    const maxTop = window.innerHeight - 160;
+    menu.style.left = `${Math.min(clientX, maxLeft)}px`;
+    menu.style.top = `${Math.min(clientY, maxTop)}px`;
+
+    const clearIsolationButton = document.getElementById('ctx-clear-isolation');
+    clearIsolationButton.style.display = isolatedVertexIds ? 'flex' : 'none';
+
+    const genericButton = document.getElementById('ctx-toggle-generic');
+    if (isTopicVertexId(vertexId)) {
+        genericButton.style.display = 'flex';
+        genericButton.innerHTML = `<i data-lucide="filter"></i> ${genericTopicIds.has(vertexId) ? 'Unmark Generic' : 'Mark Generic'}`;
+    } else {
+        genericButton.style.display = 'none';
+    }
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function hideContextMenu() {
+    const menu = document.getElementById('graph-context-menu');
+    if (!menu) {
+        return;
+    }
+
+    menu.classList.add('hidden');
+    contextMenuTargetId = null;
+}
+
+function isTopicVertexId(vertexId) {
+    return typeof vertexId === 'string' && vertexId.startsWith('topic:');
+}
+
+function toggleGenericTopic(vertexId) {
+    if (!isTopicVertexId(vertexId)) {
+        return;
+    }
+
+    if (genericTopicIds.has(vertexId)) {
+        genericTopicIds.delete(vertexId);
+        delete itemVisibility[vertexId];
+    } else {
+        genericTopicIds.add(vertexId);
+        itemVisibility[vertexId] = false;
+    }
+
+    if (isolatedRootId) {
+        isolatedVertexIds = buildIsolationSet(isolatedRootId);
+    }
+    updateVisibilityState();
+}
+
+function isolateFromVertex(rootId) {
+    isolatedRootId = rootId;
+    isolatedVertexIds = buildIsolationSet(rootId);
+    updateVisibilityState();
+}
+
+function buildIsolationSet(rootId) {
+    const visibleNeighborhood = new Set([rootId]);
+    const frontier = [{ id: rootId, depth: 0 }];
+
+    while (frontier.length > 0) {
+        const current = frontier.shift();
+        if (current.depth >= 2) {
+            continue;
+        }
+
+        links.forEach((link) => {
+            let neighborId = null;
+            const currentVisible = isBaseVertexVisible(current.id);
+            if (link.sourceId === current.id) {
+                neighborId = link.targetId;
+            } else if (link.targetId === current.id) {
+                neighborId = link.sourceId;
+            }
+
+            if (currentVisible && neighborId && isBaseVertexVisible(neighborId) && !visibleNeighborhood.has(neighborId)) {
+                visibleNeighborhood.add(neighborId);
+                frontier.push({ id: neighborId, depth: current.depth + 1 });
+            }
+        });
+    }
+
+    return visibleNeighborhood;
+}
+
+function clearIsolation() {
+    isolatedVertexIds = null;
+    isolatedRootId = null;
+    updateVisibilityState();
+}
+
+function updateVisibilityState() {
+    Object.values(vertices).forEach(applyVertexVisibility);
+    refreshLinkVisibility();
+    refreshParticleVisibility();
+
+    if (latestGraphData) {
+        updateHUDStats(latestGraphData);
+    } else {
+        refreshSectionToggles();
+    }
+
+    if (selectedEntityId && vertices[selectedEntityId]) {
+        inspectEntity(vertices[selectedEntityId]);
+    }
+}
+
+function isBaseVertexVisible(id) {
+    const vertex = vertices[id];
+    if (!vertex) {
+        return isItemVisible(id);
+    }
+
+    return isEntityVisible(vertex.type, id);
+}
+
+function isTopicHistoryVisible(topicName) {
+    const topicVertexId = `topic:${topicName}`;
+    if (vertices[topicVertexId]) {
+        return isVertexVisible(topicVertexId);
+    }
+
+    if (topicName.includes('/_action/')) {
+        const baseAction = topicName.split('/_action/')[0];
+        const actionVertexId = `action:${baseAction}`;
+        if (vertices[actionVertexId]) {
+            return isVertexVisible(actionVertexId) && isItemVisible(topicVertexId);
+        }
+    }
+
+    return isItemVisible(topicVertexId);
+}
+
+function toggleTypeVisibility(type) {
+    TYPE_VISIBILITY[type] = !TYPE_VISIBILITY[type];
+    updateVisibilityState();
+}
+
+function toggleItemVisibility(id) {
+    itemVisibility[id] = !isItemVisible(id);
+    updateVisibilityState();
+}
+
+function refreshSectionToggles() {
+    document.querySelectorAll('.section-toggle').forEach((button) => {
+        const type = button.dataset.filterType;
+        const visible = isTypeVisible(type);
+        button.classList.toggle('is-off', !visible);
+        button.title = `${visible ? 'Hide' : 'Show'} all ${type}s`;
+        button.setAttribute('aria-label', button.title);
+        button.innerHTML = `<i data-lucide="${visible ? 'eye' : 'eye-off'}"></i>`;
+    });
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function toggleSectionCollapsed(type) {
+    SECTION_COLLAPSE[type] = !SECTION_COLLAPSE[type];
+    refreshSectionCollapseButtons();
+}
+
+function refreshSectionCollapseButtons() {
+    document.querySelectorAll('.explorer-section').forEach((section) => {
+        const type = section.dataset.sectionType;
+        section.classList.toggle('is-collapsed', SECTION_COLLAPSE[type] === true);
+    });
+
+    document.querySelectorAll('.section-collapse').forEach((button) => {
+        const type = button.dataset.sectionType;
+        const collapsed = SECTION_COLLAPSE[type] === true;
+        button.classList.toggle('is-collapsed', collapsed);
+        button.title = `${collapsed ? 'Expand' : 'Collapse'} ${type}s`;
+        button.setAttribute('aria-label', button.title);
+        button.innerHTML = `<i data-lucide="${collapsed ? 'chevron-right' : 'chevron-down'}"></i>`;
+    });
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function updatePauseButton() {
+    const button = document.getElementById('btn-toggle-pause');
+    if (!button) {
+        return;
+    }
+
+    button.classList.toggle('paused', isScenePaused);
+    button.innerHTML = `<i data-lucide="${isScenePaused ? 'play' : 'pause'}"></i> ${isScenePaused ? 'Resume View' : 'Pause View'}`;
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
+}
+
+function setScenePaused(paused) {
+    isScenePaused = paused;
+    updatePauseButton();
+
+    if (!isScenePaused && pendingGraphData) {
+        const nextGraphData = pendingGraphData;
+        pendingGraphData = null;
+        handleGraphUpdate(nextGraphData);
     }
 }
 

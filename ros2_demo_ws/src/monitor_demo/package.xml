@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>monitor_demo</name>
+  <version>0.0.1</version>
+  <description>Simple ROS 2 demo graph for the ros_monitor visualizer.</description>
+  <maintainer email="ecm@example.com">ecm</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>action_msgs</depend>
+  <depend>example_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

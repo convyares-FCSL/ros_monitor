@@ -34,8 +34,42 @@ To prevent ROS 2 callback execution from blocking the WebSocket event loop:
 ## System Requirements
 
 - **Python**: 3.8 or newer
-- **Python Libraries**: `websockets` (install via `pip install websockets`)
-- **ROS 2**: Humble or Jazzy (for ROS 2 Mode)
+- **Python Libraries**: `websockets` (installed via the repo-local `.venv`)
+- **ROS 2**: Humble or Jazzy (validated on Jazzy)
+
+---
+
+## WSL / Ubuntu Quick Start
+
+Ubuntu 24.04 and recent WSL images block `pip install` into system Python by default (`externally-managed-environment`, PEP 668). This repo uses a local virtual environment that keeps ROS 2 system packages visible:
+
+```bash
+./scripts/setup_python_env.sh
+```
+
+To verify the visualizer end to end on ROS 2 Jazzy, use the bundled demo workspace:
+
+```bash
+./scripts/build_demo.sh
+```
+
+Terminal 1:
+```bash
+./scripts/run_visualizer.sh
+```
+
+Terminal 2:
+```bash
+./scripts/run_demo.sh
+```
+
+Then open:
+
+```text
+http://localhost:8080
+```
+
+The demo publishes topics, exposes a service, and runs a Fibonacci action so the visualizer has a real graph to render.
 
 ---
 
@@ -44,13 +78,13 @@ To prevent ROS 2 callback execution from blocking the WebSocket event loop:
 ### Option A: Local Simulation Mode (Windows / macOS / Linux without ROS 2)
 Use this option to test the interactive 3D frontend and verify the layout engine without any active ROS 2 system.
 
-1. Ensure the `websockets` library is installed:
+1. Create the local Python environment:
    ```bash
-   pip install websockets
+   ./scripts/setup_python_env.sh
    ```
 2. Navigate to the project root directory and run the bridge script:
    ```bash
-   python backend/bridge.py --sim
+   ./scripts/run_visualizer.sh --sim
    ```
    *Note: If `rclpy` is not installed, the bridge script will automatically fall back to simulation mode even without the `--sim` flag.*
 3. Open your browser and navigate to:
@@ -64,34 +98,31 @@ Use this option to test the interactive 3D frontend and verify the layout engine
 ### Option B: Real ROS 2 Mode (Linux Raspberry Pi / PC with ROS 2 Jazzy or Humble)
 Use this option inside a sourced ROS 2 workspace.
 
-1. Ensure the `websockets` library is installed:
+1. Create the local Python environment:
    ```bash
-   pip3 install websockets
+   ./scripts/setup_python_env.sh
    ```
 2. Source your ROS 2 workspace:
    ```bash
-   source /opt/ros/jazzy/setup.bash  # or setup.zsh, or /opt/ros/humble/...
+   source /opt/ros/jazzy/setup.bash
+   source /path/to/your_ws/install/setup.bash  # optional, needed for custom interfaces
    ```
 3. Run the bridge:
    ```bash
-   python3 backend/bridge.py
+   ./scripts/run_visualizer.sh
    ```
-4. Run some active ROS 2 nodes in separate terminals. For instance, the standard Python demo nodes:
+4. Run some active ROS 2 nodes in a separate terminal. For a quick check, use the bundled demo:
    ```bash
-   # In terminal 2
-   source /opt/ros/jazzy/setup.bash
-   ros2 run demo_nodes_py talker
-   ```
-   ```bash
-   # In terminal 3
-   source /opt/ros/jazzy/setup.bash
-   ros2 run demo_nodes_py listener
+   ./scripts/build_demo.sh
+   ./scripts/run_demo.sh
    ```
 5. Open a browser (on the same machine or on a computer on the same network) and go to:
    ```
    http://<RASPBERRY_PI_IP>:8080
    ```
    *(Ensure port `8080` and `8765` are open on the Raspberry Pi's firewall).*
+
+If the bridge logs warnings such as `Could not dynamically subscribe ... No module named ...`, the graph is still visible, but payload decoding for those topic types is unavailable until the workspace that defines those interfaces is sourced before starting the bridge.
 
 ---
 

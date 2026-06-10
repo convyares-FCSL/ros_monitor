@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <!-- Lucide icons for high-tech HUD layout -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Local vendor bundles keep the app working in restricted/corporate environments -->
+    <script src="vendor/lucide.js"></script>
 </head>
 <body>
     <!-- 3D Canvas Container -->
@@ -62,11 +62,19 @@
             
             <div class="sidebar-sections">
                 <!-- Node Section -->
-                <section class="explorer-section">
+                <section class="explorer-section" data-section-type="node">
                     <div class="section-title">
                         <i data-lucide="box" class="section-icon text-cyan"></i>
                         <h3>Nodes</h3>
-                        <span class="section-count" id="count-nodes">0</span>
+                        <div class="section-actions">
+                            <span class="section-count" id="count-nodes">0</span>
+                            <button class="section-collapse" data-section-type="node" title="Collapse nodes" aria-label="Collapse nodes">
+                                <i data-lucide="chevron-down"></i>
+                            </button>
+                            <button class="section-toggle" data-filter-type="node" title="Hide or show all nodes" aria-label="Hide or show all nodes">
+                                <i data-lucide="eye"></i>
+                            </button>
+                        </div>
                     </div>
                     <ul class="graph-list" id="node-list">
                         <li class="empty-list">No active nodes</li>
@@ -74,11 +82,19 @@
                 </section>
 
                 <!-- Topics Section -->
-                <section class="explorer-section">
+                <section class="explorer-section" data-section-type="topic">
                     <div class="section-title">
                         <i data-lucide="git-commit" class="section-icon text-orange"></i>
                         <h3>Topics</h3>
-                        <span class="section-count" id="count-topics">0</span>
+                        <div class="section-actions">
+                            <span class="section-count" id="count-topics">0</span>
+                            <button class="section-collapse" data-section-type="topic" title="Collapse topics" aria-label="Collapse topics">
+                                <i data-lucide="chevron-down"></i>
+                            </button>
+                            <button class="section-toggle" data-filter-type="topic" title="Hide or show all topics" aria-label="Hide or show all topics">
+                                <i data-lucide="eye"></i>
+                            </button>
+                        </div>
                     </div>
                     <ul class="graph-list" id="topic-list">
                         <li class="empty-list">No active topics</li>
@@ -86,11 +102,19 @@
                 </section>
 
                 <!-- Actions Section -->
-                <section class="explorer-section">
+                <section class="explorer-section" data-section-type="action">
                     <div class="section-title">
                         <i data-lucide="layers" class="section-icon text-purple"></i>
                         <h3>Actions</h3>
-                        <span class="section-count" id="count-actions">0</span>
+                        <div class="section-actions">
+                            <span class="section-count" id="count-actions">0</span>
+                            <button class="section-collapse" data-section-type="action" title="Collapse actions" aria-label="Collapse actions">
+                                <i data-lucide="chevron-down"></i>
+                            </button>
+                            <button class="section-toggle" data-filter-type="action" title="Hide or show all actions" aria-label="Hide or show all actions">
+                                <i data-lucide="eye"></i>
+                            </button>
+                        </div>
                     </div>
                     <ul class="graph-list" id="action-list">
                         <li class="empty-list">No active actions</li>
@@ -98,11 +122,19 @@
                 </section>
 
                 <!-- Services Section -->
-                <section class="explorer-section">
+                <section class="explorer-section" data-section-type="service">
                     <div class="section-title">
                         <i data-lucide="arrow-right-left" class="section-icon text-green"></i>
                         <h3>Services</h3>
-                        <span class="section-count" id="count-services">0</span>
+                        <div class="section-actions">
+                            <span class="section-count" id="count-services">0</span>
+                            <button class="section-collapse" data-section-type="service" title="Collapse services" aria-label="Collapse services">
+                                <i data-lucide="chevron-down"></i>
+                            </button>
+                            <button class="section-toggle" data-filter-type="service" title="Hide or show all services" aria-label="Hide or show all services">
+                                <i data-lucide="eye"></i>
+                            </button>
+                        </div>
                     </div>
                     <ul class="graph-list" id="service-list">
                         <li class="empty-list">No active services</li>
@@ -123,13 +155,14 @@
             <div class="action-buttons">
                 <button id="btn-recenter" class="action-btn"><i data-lucide="maximize-2"></i> Recenter Camera</button>
                 <button id="btn-toggle-sim" class="action-btn btn-secondary"><i data-lucide="play"></i> Toggle Simulation</button>
+                <button id="btn-toggle-pause" class="action-btn btn-secondary action-btn-wide"><i data-lucide="pause"></i> Pause View</button>
             </div>
         </div>
 
         <!-- Dynamic Message Inspector Panel (Right Drawer) -->
         <div class="inspector-drawer glass-panel" id="inspector-panel">
             <div class="drawer-header">
-                <div class="inspector-tag"><i data-lucide="search" class="icon-inline"></i> Packet Inspector</div>
+                <div class="inspector-tag" id="inspector-title"><i data-lucide="search" class="icon-inline"></i> Packet Inspector</div>
                 <button id="close-inspector" class="icon-button"><i data-lucide="x"></i></button>
             </div>
             
@@ -145,11 +178,18 @@
             </div>
         </div>
 
+        <div class="graph-context-menu glass-panel hidden" id="graph-context-menu">
+            <button class="context-menu-item" id="ctx-hide-item"><i data-lucide="eye-off"></i> Hide</button>
+            <button class="context-menu-item" id="ctx-isolate-item"><i data-lucide="focus"></i> Isolate</button>
+            <button class="context-menu-item" id="ctx-toggle-generic"><i data-lucide="filter"></i> Mark Generic</button>
+            <button class="context-menu-item" id="ctx-clear-isolation"><i data-lucide="scan-search"></i> Clear Isolation</button>
+        </div>
+
     </div>
 
     <!-- Script imports -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="vendor/three.min.js"></script>
+    <script src="vendor/OrbitControls.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
