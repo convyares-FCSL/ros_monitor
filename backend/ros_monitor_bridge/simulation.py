@@ -1,6 +1,52 @@
 import math
+import random
 import threading
 import time
+
+
+# Nodes that participate in lifecycle simulation
+_LIFECYCLE_NODES = [
+    '/camera_driver',
+    '/lidar_driver',
+    '/localization_node',
+    '/planner_node',
+    '/motion_controller',
+]
+
+# Lifecycle progression: unconfigured -> inactive -> active (loop with occasional error)
+_LIFECYCLE_ORDER = ['unconfigured', 'inactive', 'active']
+
+_NODE_PARAMS = {
+    '/camera_driver': {
+        'image_width': 1280, 'image_height': 720,
+        'frame_id': 'camera_link', 'fps': 30.0, 'encoding': 'bgr8',
+        'auto_exposure': True,
+    },
+    '/lidar_driver': {
+        'range_min': 0.12, 'range_max': 30.0,
+        'frame_id': 'laser', 'scan_frequency': 15.0, 'angle_increment': 0.00436,
+    },
+    '/localization_node': {
+        'use_sim_time': False, 'map_frame': 'map',
+        'odom_frame': 'odom', 'robot_frame': 'base_link', 'transform_tolerance': 0.1,
+    },
+    '/planner_node': {
+        'max_vel_x': 0.5, 'max_vel_theta': 1.0,
+        'planner_frequency': 5.0, 'goal_tolerance': 0.1, 'xy_tolerance': 0.05,
+    },
+    '/motion_controller': {
+        'controller_frequency': 10.0, 'acc_lim_x': 2.5,
+        'acc_lim_theta': 3.2, 'kp': 1.2, 'kd': 0.08,
+    },
+}
+
+# Nominal publish rates for frequency_update simulation
+_TOPIC_HZ = {
+    '/pose': 5.0,
+    '/cmd_vel': 2.0,
+    '/camera/image_raw': 1.0,
+    '/scan': 1.0,
+}
 
 
 class SimulatedBridge:
@@ -9,6 +55,12 @@ class SimulatedBridge:
         self.logger = logger
         self.sim_thread = None
         self.running = False
+
+        rng = random.Random(42)
+        # Each lifecycle node staggers its activation to look realistic
+        self._lifecycle_states = {n: 'unconfigured' for n in _LIFECYCLE_NODES}
+        self._lifecycle_next = {n: rng.uniform(2.0, 4.5) for n in _LIFECYCLE_NODES}
+        self._last_hz_emit = 0.0
 
     def start(self):
         self.running = True
@@ -33,6 +85,8 @@ class SimulatedBridge:
 
         while self.running:
             now = time.time()
+
+            # --- Graph topology (every 4s) ---
             if now - last_graph_update > 4.0:
                 self.runtime.dispatch_event(
                     {
@@ -48,6 +102,10 @@ class SimulatedBridge:
                 )
                 last_graph_update = now
 
+            # --- Lifecycle state machine ---
+            self._tick_lifecycle(t, now)
+
+            # --- Message events ---
             if math.floor(t * 5) != math.floor((t - 0.1) * 5):
                 self.runtime.dispatch_event(_pose_event(now, t))
 
@@ -58,6 +116,12 @@ class SimulatedBridge:
                 self.runtime.dispatch_event(_heavy_event(now, "/camera/image_raw", "sensor_msgs/msg/Image", 921600))
                 self.runtime.dispatch_event(_heavy_event(now, "/scan", "sensor_msgs/msg/LaserScan", 1440))
 
+            # --- Frequency update (every 1s) ---
+            if now - self._last_hz_emit >= 1.0:
+                self._emit_frequency_update(now, t)
+                self._last_hz_emit = now
+
+            # --- Action simulation ---
             if not action_active and int(now) % 12 == 0:
                 action_active = True
                 action_step = 0
@@ -77,6 +141,72 @@ class SimulatedBridge:
 
             time.sleep(0.1)
             t += 0.1
+
+    def _tick_lifecycle(self, t, now):
+        for node_name in _LIFECYCLE_NODES:
+            if t < self._lifecycle_next[node_name]:
+                continue
+
+            current = self._lifecycle_states[node_name]
+            idx = _LIFECYCLE_ORDER.index(current) if current in _LIFECYCLE_ORDER else 0
+
+            if current == 'active':
+                # Occasionally inject a brief error on the planner then recover
+                if int(t) % 47 == 0 and node_name == '/planner_node':
+                    next_state = 'error_processing'
+                    self._lifecycle_next[node_name] = t + 1.5
+                else:
+                    self._lifecycle_next[node_name] = t + 60.0
+                    continue
+            elif current == 'error_processing':
+                next_state = 'active'
+                self._lifecycle_next[node_name] = t + 60.0
+            else:
+                next_idx = idx + 1
+                if next_idx >= len(_LIFECYCLE_ORDER):
+                    continue
+                next_state = _LIFECYCLE_ORDER[next_idx]
+                # Each step takes 1.5–3s
+                self._lifecycle_next[node_name] = t + random.uniform(1.5, 3.0)
+
+            self._lifecycle_states[node_name] = next_state
+            self.runtime.dispatch_event(
+                {
+                    "type": "lifecycle_event",
+                    "timestamp": now,
+                    "data": {
+                        "node_name": node_name,
+                        "start_state": current,
+                        "goal_state": next_state,
+                    },
+                }
+            )
+
+            if next_state == 'active' and node_name in _NODE_PARAMS:
+                self.runtime.dispatch_event(
+                    {
+                        "type": "node_params_event",
+                        "timestamp": now,
+                        "data": {
+                            "node_name": node_name,
+                            "params": _NODE_PARAMS[node_name],
+                        },
+                    }
+                )
+
+    def _emit_frequency_update(self, now, t):
+        updates = {}
+        for topic, base_hz in _TOPIC_HZ.items():
+            # Add subtle sinusoidal jitter to make it look live
+            jitter = base_hz * 0.06 * math.sin(t * 0.7 + abs(hash(topic)) % 7)
+            updates[topic] = round(base_hz + jitter, 2)
+        self.runtime.dispatch_event(
+            {
+                "type": "frequency_update",
+                "timestamp": now,
+                "data": {"updates": updates},
+            }
+        )
 
 
 def _mock_topology():
@@ -232,4 +362,3 @@ def _action_result_event(now, sequence):
             "size_bytes": len(sequence) * 4,
         },
     }
-

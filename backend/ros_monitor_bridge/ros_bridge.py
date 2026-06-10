@@ -1,6 +1,7 @@
 import threading
 import time
 import traceback
+from collections import deque
 
 from ros_monitor_bridge.config import HEAVY_MESSAGE_TYPES
 from ros_monitor_bridge.utils import trim_payload
@@ -24,6 +25,36 @@ except ImportError:
     message_to_ordereddict = None
     get_message = None
 
+_LIFECYCLE_TRANSITION_EVENT_TYPE = 'lifecycle_msgs/msg/TransitionEvent'
+
+
+class TopicHzTracker:
+    """Rolling-window Hz estimator using the last N inter-arrival intervals."""
+
+    _WINDOW = 5
+
+    def __init__(self):
+        self._timestamps: dict[str, deque] = {}
+        self._lock = threading.Lock()
+
+    def record(self, topic_name: str) -> None:
+        with self._lock:
+            if topic_name not in self._timestamps:
+                self._timestamps[topic_name] = deque(maxlen=self._WINDOW + 1)
+            self._timestamps[topic_name].append(time.time())
+
+    def get_all_hz(self) -> dict[str, float]:
+        result = {}
+        with self._lock:
+            for topic, times in self._timestamps.items():
+                if len(times) < 2:
+                    continue
+                intervals = [times[i] - times[i - 1] for i in range(1, len(times))]
+                avg = sum(intervals) / len(intervals)
+                if avg > 0:
+                    result[topic] = round(1.0 / avg, 2)
+        return result
+
 
 if ROS_AVAILABLE:
     class ROS2BridgeNode(Node):
@@ -33,8 +64,10 @@ if ROS_AVAILABLE:
             self.rate_limiter = rate_limiter
             self.logger = logger
             self.active_subscriptions = {}
+            self.hz_tracker = TopicHzTracker()
             self.graph_lock = threading.Lock()
             self.graph_timer = self.create_timer(2.0, self.update_graph_topology)
+            self.hz_timer = self.create_timer(1.0, self.emit_frequency_update)
             self.logger.info("Initializing ROS 2 Bridge Node...")
             self.logger.info("ROS 2 graph query timer started (2s interval).")
 
@@ -114,6 +147,17 @@ if ROS_AVAILABLE:
                     self.logger.error(f"Error updating graph topology: {exc}")
                     traceback.print_exc()
 
+        def emit_frequency_update(self):
+            updates = self.hz_tracker.get_all_hz()
+            if updates:
+                self.runtime.dispatch_event(
+                    {
+                        "type": "frequency_update",
+                        "timestamp": time.time(),
+                        "data": {"updates": updates},
+                    }
+                )
+
         def sync_topic_subscriptions(self, current_topics):
             target_topics = {}
             for topic in current_topics:
@@ -145,6 +189,29 @@ if ROS_AVAILABLE:
 
         def make_subscription_callback(self, topic_name, topic_type):
             def callback(msg):
+                # Always record arrival for Hz tracking
+                self.hz_tracker.record(topic_name)
+
+                # Lifecycle TransitionEvent → emit dedicated lifecycle_event
+                if topic_type == _LIFECYCLE_TRANSITION_EVENT_TYPE:
+                    try:
+                        node_name = _node_name_from_transition_topic(topic_name)
+                        self.runtime.dispatch_event(
+                            {
+                                "type": "lifecycle_event",
+                                "timestamp": time.time(),
+                                "data": {
+                                    "node_name": node_name,
+                                    "start_state": msg.start_state.label,
+                                    "goal_state": msg.goal_state.label,
+                                    "transition_id": msg.transition.id,
+                                },
+                            }
+                        )
+                    except Exception as exc:
+                        self.logger.debug(f"Failed to parse lifecycle event on {topic_name}: {exc}")
+                    return  # Don't emit a message_event for lifecycle transitions
+
                 if not self.rate_limiter.is_allowed(topic_name):
                     return
 
@@ -189,6 +256,14 @@ def run_ros2_node(runtime, rate_limiter, stop_event, logger):
         logger.info("ROS 2 Executor Thread terminated.")
 
 
+def _node_name_from_transition_topic(topic_name: str) -> str:
+    """Derive node name from a lifecycle TransitionEvent topic path."""
+    suffix = '/transition_event'
+    if topic_name.endswith(suffix):
+        return topic_name[: -len(suffix)]
+    return topic_name
+
+
 def _match_action_suffix(name, suffixes):
     for suffix in suffixes:
         if name.endswith(suffix):
@@ -222,4 +297,3 @@ def _find_service_clients(node, raw_nodes, service_name):
                 clients.append(node_name)
                 break
     return clients
-

@@ -1,7 +1,14 @@
 // --- WebSocket Connection to ROS Monitor Bridge ---
 
 import { state, wsUrl, logger, updateConnStatus, updateBandwidthStats } from './state.js';
-import { handleGraphUpdate, handleMessageEvent, clearGraph } from './graph.js';
+import {
+    handleGraphUpdate,
+    handleMessageEvent,
+    handleLifecycleEvent,
+    handleFrequencyUpdate,
+    handleNodeParams,
+    clearGraph,
+} from './graph.js';
 
 export function initWebSocket() {
     updateConnStatus('disconnected', 'CONNECTING...');
@@ -26,17 +33,19 @@ export function initWebSocket() {
         try {
             const msg = JSON.parse(event.data);
 
-            // Stats updates
             state.bytesReceived += event.data.length;
             updateBandwidthStats();
 
             if (msg.type === 'graph_update') {
                 handleGraphUpdate(msg.data);
             } else if (msg.type === 'message_event') {
-                handleMessageEvent({
-                    ...msg.data,
-                    timestamp: msg.timestamp
-                });
+                handleMessageEvent({ ...msg.data, timestamp: msg.timestamp });
+            } else if (msg.type === 'lifecycle_event') {
+                handleLifecycleEvent(msg.data);
+            } else if (msg.type === 'frequency_update') {
+                handleFrequencyUpdate(msg.data);
+            } else if (msg.type === 'node_params_event') {
+                handleNodeParams(msg.data);
             }
         } catch (err) {
             console.error("Error processing websocket message:", err);
@@ -52,7 +61,6 @@ export function initWebSocket() {
         updateConnStatus('disconnected', 'DISCONNECTED');
         clearGraph();
 
-        // Start reconnection loop if not already running
         if (!state.reconnectTimer) {
             state.reconnectTimer = setInterval(initWebSocket, 4000);
         }

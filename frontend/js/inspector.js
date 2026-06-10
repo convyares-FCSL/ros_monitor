@@ -3,6 +3,14 @@
 import { state, NODE_TYPES, MAX_HISTORY_PER_TOPIC, refreshIcons } from './state.js';
 import { isTopicHistoryVisible } from './visibility.js';
 
+const LIFECYCLE_CSS = {
+    unconfigured:     'lc-unconfigured',
+    inactive:         'lc-inactive',
+    active:           'lc-active',
+    error_processing: 'lc-error',
+    finalized:        'lc-error',
+};
+
 // --- Packet (particle) inspection ---
 export function inspectParticle(particle) {
     state.selectedEntityId = null;
@@ -123,6 +131,10 @@ export function inspectEntity(vertex) {
     document.getElementById('inspector-panel').classList.remove('collapsed');
     bindInspectorInteractions();
 
+    if (vertex.type === NODE_TYPES.TOPIC) {
+        requestAnimationFrame(() => drawSparkline(vertex.name));
+    }
+
     refreshIcons();
 }
 
@@ -187,7 +199,11 @@ function renderNodeInspector(vertex, groups, selectedEntry) {
     const actionClients = actions.filter((action) => action.clients.includes(vertex.name)).map((action) => action.name);
     const actionServers = actions.filter((action) => action.servers.includes(vertex.name)).map((action) => action.name);
 
+    const lifecycleHtml = renderLifecycleSection(vertex.name);
+    const paramsHtml = renderParamsSection(vertex.name);
+
     return `
+        ${lifecycleHtml}
         <section class="entity-info-grid">
             ${renderInfoCard('Publisher', publishers)}
             ${renderInfoCard('Subscriber', subscribers)}
@@ -196,6 +212,7 @@ function renderNodeInspector(vertex, groups, selectedEntry) {
             ${renderInfoCard('Action Client', actionClients)}
             ${renderInfoCard('Action', actionServers)}
         </section>
+        ${paramsHtml}
         ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `<div class="history-empty">No recent message history for this node yet.</div>`}
     `;
 }
@@ -210,6 +227,7 @@ function renderTopicInspector(vertex, groups, selectedEntry) {
             ${renderInfoCard('Publisher', publishers)}
             ${renderInfoCard('Subscriber', subscribers)}
         </section>
+        ${renderSparklineSection(vertex.name)}
         ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `<div class="history-empty">No recent message history for this topic yet.</div>`}
     `;
 }
@@ -249,6 +267,129 @@ function renderServiceInspector(vertex, groups, selectedEntry) {
             </section>
         `}
     `;
+}
+
+function renderLifecycleSection(nodeName) {
+    const lcState = state.nodeLifecycleState[nodeName];
+    if (!lcState) return '';
+    const cssClass = LIFECYCLE_CSS[lcState] ?? 'lc-unconfigured';
+    const label = lcState.replace('_', ' ');
+    return `
+        <div class="lifecycle-status-row">
+            <span class="lbl">Lifecycle</span>
+            <span class="lifecycle-badge ${cssClass}">${label}</span>
+        </div>
+    `;
+}
+
+function renderParamsSection(nodeName) {
+    const params = state.nodeParams[nodeName];
+    if (!params) return '';
+    const rows = Object.entries(params).map(([k, v]) => `
+        <div class="param-row">
+            <span class="param-key">${k}</span>
+            <span class="param-val">${JSON.stringify(v)}</span>
+        </div>
+    `).join('');
+    return `
+        <section class="params-section">
+            <div class="params-header">
+                <i data-lucide="sliders-horizontal" class="section-icon text-cyan"></i>
+                <h3>Parameters</h3>
+                <span class="section-count">${Object.keys(params).length}</span>
+            </div>
+            <div class="params-list">${rows}</div>
+        </section>
+    `;
+}
+
+function renderSparklineSection(topicName) {
+    const hzInfo = state.topicHz[topicName];
+    const hzStr = hzInfo ? `${hzInfo.hz.toFixed(1)} Hz` : '--';
+    const health = hzInfo?.health ?? 'unknown';
+    const safeId = topicName.replace(/[^a-zA-Z0-9-_]/g, '_');
+    return `
+        <section class="sparkline-section">
+            <div class="sparkline-header">
+                <i data-lucide="activity" class="section-icon"></i>
+                <h3>Frequency</h3>
+                <span class="hz-badge hz-${health}">${hzStr}</span>
+            </div>
+            <canvas class="sparkline-canvas" id="sparkline-${safeId}" width="320" height="60"></canvas>
+            <div class="sparkline-legend"><span class="sparkline-label">30 s window</span></div>
+        </section>
+    `;
+}
+
+function drawSparkline(topicName) {
+    const safeId = topicName.replace(/[^a-zA-Z0-9-_]/g, '_');
+    const canvas = document.getElementById(`sparkline-${safeId}`);
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const history = state.topicHzHistory[topicName] ?? [];
+    if (history.length < 2) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Awaiting data…', W / 2, H / 2 + 4);
+        return;
+    }
+
+    const hzInfo = state.topicHz[topicName];
+    const health = hzInfo?.health ?? 'unknown';
+    const lineColors  = { stable: '#10b981', jitter: '#f59e0b', stale: '#ef4444', unknown: '#64748b' };
+    const fillColors  = { stable: 'rgba(16,185,129,0.15)', jitter: 'rgba(245,158,11,0.15)', stale: 'rgba(239,68,68,0.15)', unknown: 'rgba(100,116,139,0.15)' };
+    const lineColor = lineColors[health] ?? lineColors.unknown;
+    const fillColor = fillColors[health] ?? fillColors.unknown;
+
+    const now = Date.now();
+    const windowMs = 30000;
+    const maxHz = Math.max(...history.map(e => e.hz), 1) * 1.15;
+
+    // Faint grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+        const y = Math.round(H * i / 3) + 0.5;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // Sparkline path
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = lineColor;
+    ctx.shadowBlur = 5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+
+    history.forEach((entry, i) => {
+        const x = W * (1 - (now - entry.ts) / windowMs);
+        const y = H - (entry.hz / maxHz) * (H - 8) - 4;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Fill area under curve
+    ctx.shadowBlur = 0;
+    const last = history[history.length - 1];
+    const first = history[0];
+    ctx.lineTo(W * (1 - (now - last.ts) / windowMs), H);
+    ctx.lineTo(W * (1 - (now - first.ts) / windowMs), H);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    // Y-axis max label
+    ctx.fillStyle = '#64748b';
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.shadowBlur = 0;
+    ctx.fillText(`${(maxHz / 1.15).toFixed(1)} Hz`, 3, 11);
 }
 
 function renderInfoCard(title, items) {

@@ -1,6 +1,6 @@
 // --- Three.js Scene, Camera, Renderer & Mesh Factories ---
 
-import { state, COLORS, NODE_TYPES } from './state.js';
+import { state, COLORS, NODE_TYPES, LIFECYCLE_COLORS } from './state.js';
 import { onSceneClick, onSceneContextMenu, onPointerDown, onPointerMove, onPointerUp } from './interactions.js';
 
 const container = document.getElementById('canvas-container');
@@ -199,6 +199,67 @@ export function onWindowResize() {
     state.camera.aspect = window.innerWidth / window.innerHeight;
     state.camera.updateProjectionMatrix();
     state.renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// Create a small Hz indicator sprite below a topic node
+export function createHzSprite() {
+    return _buildHzSprite('--', 'unknown');
+}
+
+// Redraw the Hz sprite texture in-place with new hz/health values
+export function updateHzSprite(vertex, hz, health) {
+    if (!vertex.hzSprite) return;
+    const text = hz != null ? `${hz.toFixed(1)} Hz` : '--';
+    const newMap = _hzCanvasTexture(text, health);
+    if (vertex.hzSprite.material.map) {
+        vertex.hzSprite.material.map.dispose();
+    }
+    vertex.hzSprite.material.map = newMap;
+    vertex.hzSprite.material.needsUpdate = true;
+}
+
+// Morph a node cylinder's emissive color to reflect its lifecycle state
+export function updateNodeLifecycleColor(vertex, lifecycleState) {
+    const color = LIFECYCLE_COLORS[lifecycleState] ?? LIFECYCLE_COLORS.unconfigured;
+    const mat = vertex.mesh.material;
+    if (!mat) return;
+    mat.emissive.setHex(color);
+    mat.emissiveIntensity = (lifecycleState === 'error_processing' || lifecycleState === 'finalized') ? 0.7 : 0.3;
+    if (lifecycleState === 'error_processing' || lifecycleState === 'finalized') {
+        mat.color.setHex(color);
+    } else {
+        mat.color.setHex(COLORS[NODE_TYPES.NODE]);
+    }
+}
+
+function _buildHzSprite(text, health) {
+    const mat = new THREE.SpriteMaterial({ map: _hzCanvasTexture(text, health), transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(3.5, 0.7, 1);
+    return sprite;
+}
+
+function _hzCanvasTexture(text, health) {
+    const cssColors = {
+        stable:  '#10b981',
+        jitter:  '#f59e0b',
+        stale:   '#ef4444',
+        unknown: '#64748b',
+    };
+    const color = cssColors[health] ?? cssColors.unknown;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 36;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 160, 36);
+    ctx.font = 'bold 15px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color;
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 4;
+    ctx.fillText(text, 80, 24);
+    return new THREE.CanvasTexture(canvas);
 }
 
 // Smooth camera target transition

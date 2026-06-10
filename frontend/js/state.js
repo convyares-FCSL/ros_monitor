@@ -21,6 +21,31 @@ export const COLORS = {
     BG_DARK: 0x030712
 };
 
+// Emissive color per lifecycle state
+export const LIFECYCLE_COLORS = {
+    unconfigured:     0x64748b,  // slate grey
+    inactive:         0xf59e0b,  // amber
+    active:           0x06b6d4,  // cyan (normal)
+    error_processing: 0xef4444,  // red
+    finalized:        0xef4444,  // red
+};
+
+// Hz health status constants
+export const HZ_HEALTH = {
+    STABLE:  'stable',
+    JITTER:  'jitter',
+    STALE:   'stale',
+    UNKNOWN: 'unknown',
+};
+
+// Three.js hex colors per Hz health state (used for link and sprite coloring)
+export const HZ_HEALTH_COLORS = {
+    stable:  0x10b981,  // green
+    jitter:  0xf59e0b,  // amber
+    stale:   0xef4444,  // red
+    unknown: 0x475569,  // default slate
+};
+
 // Force-Directed Graph Layout Parameters
 export const K_REPULSION = 18.0;
 export const K_ATTRACTION = 0.08;
@@ -94,6 +119,12 @@ export const state = {
     genericOverrides: new Map(), // vertexId -> true/false (explicit user override)
     genericGroupExpanded: {},    // sidebar list element id -> bool (collapsed by default)
     inspectorCardExpanded: {},   // entity-info card title -> bool (collapsed by default)
+
+    // Lifecycle & telemetry state
+    nodeLifecycleState: {},   // node_name -> lifecycle state string
+    nodeParams: {},            // node_name -> { param: value }
+    topicHz: {},              // topic_name -> { hz, health, lastUpdate }
+    topicHzHistory: {},       // topic_name -> [{ts, hz}, ...] (30s rolling)
 
     // Message / inspector history
     messageHistory: {},
