@@ -1,7 +1,7 @@
 // --- Local Frontend Sandbox Simulation Mode (Fallback when backend offline) ---
 
 import { state, logger } from './state.js';
-import { handleGraphUpdate, handleMessageEvent, clearGraph } from './graph.js';
+import { handleGraphUpdate, handleMessageEvent, handleServiceInvoked, clearGraph } from './graph.js';
 import { initWebSocket } from './websocket.js';
 
 export function startLocalSimulation() {
@@ -133,6 +133,16 @@ export function startLocalSimulation() {
                 payload: { status: "OK", level: 0 },
                 dropped_payload: false,
                 size_bytes: 96
+            });
+        }
+
+        // Periodic service call: port flare + pulse along the dashed client edge
+        if (Math.floor(t) % 5 === 0) {
+            handleServiceInvoked({
+                service_name: "/calibrate_sensors",
+                event_type: 1,
+                timestamp: now,
+                payload: {}
             });
         }
     }, 1000);

@@ -2,6 +2,13 @@
 
 A functional "first-gen" prototype of a browser-based **3D ROS 2 Network Visualizer** designed to monitor a running ROS 2 system. It features a Python WebSocket bridge that queries the ROS 2 graph dynamically and handles dynamic subscriptions with rate limiting and payload trimming. The frontend renders a premium glassmorphic HUD alongside a WebGL-based 3D scene using Three.js, animating telemetry message particles along real-time connection paths.
 
+Two frontends share the same bridge (see **Frontends** below):
+
+| Directory | Stack | Run with |
+|---|---|---|
+| `frontend/` | Vanilla JS + Three.js (reference implementation) | `./scripts/run_visualizer.sh` |
+| `frontend_new/` | React + TypeScript + Vite + Tailwind | `./scripts/run_visualizer_new.sh` |
+
 ---
 
 ## Architectural Approach
@@ -36,6 +43,8 @@ To prevent ROS 2 callback execution from blocking the WebSocket event loop:
 - **Python**: 3.8 or newer
 - **Python Libraries**: `websockets` (installed via the repo-local `.venv`)
 - **ROS 2**: Humble or Jazzy (validated on Jazzy)
+- **Node.js + npm**: only required for the React frontend (`frontend_new/`); the
+  vanilla `frontend/` has no build step
 
 ---
 
@@ -126,10 +135,142 @@ If the bridge logs warnings such as `Could not dynamically subscribe ... No modu
 
 ---
 
+## Frontends
+
+Both frontends speak the same WebSocket protocol (port `8765`) and are served by
+the same bridge on port `7260`. They can be swapped without touching the backend.
+
+### `frontend/` — vanilla JS (reference implementation)
+
+The original frontend: plain ES modules, no build step, vendored Three.js bundles
+(`Line2`, `Postprocessing`). This is where features land first — service docking,
+dead-end filtering, Hz arteries, lifecycle states, etc. Served directly from the
+directory by `./scripts/run_visualizer.sh`. Edit a file, refresh the browser.
+
+### `frontend_new/` — React + TypeScript (generated with bolt.new)
+
+A React 18 + TypeScript + Vite + Tailwind rebuild implementing the same protocol
+(see `BOLT_PROMPT.md` for the full feature/behaviour specification it was built
+against). It must be **built** before the bridge can serve it.
+
+**Run it (build + serve, one command):**
+
+```bash
+./scripts/run_visualizer_new.sh              # npm install (first run) + vite build + bridge
+./scripts/run_visualizer_new.sh --skip-build # fast restart, reuse the existing dist/
+./scripts/run_visualizer_new.sh --sim        # extra args are forwarded to the bridge
+```
+
+Then open `http://localhost:7260` as usual.
+
+**Develop it (hot reload):**
+
+```bash
+# Terminal 1 — bridge only (either run script works; the frontend it serves is irrelevant)
+./scripts/run_visualizer.sh
+
+# Terminal 2 — Vite dev server with hot module reload
+cd frontend_new
+npm run dev          # opens on http://localhost:5173, connects to ws://localhost:8765
+```
+
+The app derives the bridge address from the page's hostname, so the dev server on
+`:5173` still reaches the bridge on `:8765` automatically.
+
+**Other commands** (from `frontend_new/`):
+
+```bash
+npm run build        # production build → frontend_new/dist/
+npm run typecheck    # tsc --noEmit
+npm run lint         # eslint
+```
+
+### Serving any frontend build: `ROS_MONITOR_FRONTEND_DIR`
+
+The bridge serves `frontend/` by default. The `ROS_MONITOR_FRONTEND_DIR`
+environment variable overrides that — this is how `run_visualizer_new.sh` points
+it at the React build:
+
+```bash
+ROS_MONITOR_FRONTEND_DIR=/path/to/any/static/dir ./scripts/run_visualizer.sh
+```
+
+---
+
+## Monitoring the mServe stack
+
+The bridge must be started from a shell that has both ROS 2 **and** the mServe
+workspace sourced — otherwise custom interface types (e.g. `interfaces/srv/Drive`)
+cannot be decoded and those subscriptions are skipped:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/ecm/ai-workspace/projects/mServe-STACK/ws/install/setup.bash
+./scripts/run_visualizer.sh
+```
+
+If the mServe workspace has not been built yet:
+
+```bash
+cd /home/ecm/ai-workspace/projects/mServe-STACK/ws
+colcon build --packages-select interfaces utils mserve_drivechain mserve_base
+```
+
+---
+
+## Service call visibility (introspection)
+
+Topics can be observed by simply subscribing, but **service calls are point-to-point
+request/reply** — they cannot be sniffed passively. The visualizer relies on ROS 2
+**service introspection** (Iron+): when a server (or client) opts in, every
+request/response is mirrored onto a regular `<service>/_service_event` topic, which
+the bridge auto-detects and subscribes to.
+
+**This is opt-in per service, in the node's code.** No introspection → service
+topology is still shown (servers/clients/types), but live calls are invisible.
+Enabling it on the **server side alone is enough** — the server emits a
+`REQUEST_RECEIVED` event no matter who calls (another node, rosbridge, or
+`ros2 service call`).
+
+rclpy:
+
+```python
+from rclpy.qos import qos_profile_system_default
+from rclpy.service_introspection import ServiceIntrospectionState
+
+srv = self.create_service(AddTwoInts, '/my/service', self.handle)
+srv.configure_introspection(
+    self.get_clock(), qos_profile_system_default,
+    ServiceIntrospectionState.CONTENTS)  # METADATA = events without payloads
+```
+
+rclcpp:
+
+```cpp
+#include <rcl/service_introspection.h>
+
+service_ = create_service<Trigger>("/my/service", cb);
+service_->configure_introspection(
+    get_clock(), rclcpp::SystemDefaultsQoS(), RCL_SERVICE_INTROSPECTION_CONTENTS);
+```
+
+Already enabled in this ecosystem: the demo `math_service`/`math_client`, and all
+four `mserve_drivechain` services (`/connect`, `/stop`, `/drive`, `/set_motor_id`).
+
+Verify after starting the stack:
+
+```bash
+ros2 topic list | grep _service_event
+```
+
+---
+
 ## Visual UX Reference
 
 - **Blue/Teal Cylinders**: ROS 2 Nodes.
-- **Orange Spheres**: Active Topics.
-- **Green Cubes**: Services.
+- **Orange Spheres**: Active Topics (line thickness tracks publish rate).
+- **Green Octahedra**: Services. Orphan services (no client) sit as dim ports on a
+  ring orbiting their host node; connected services sit mid-edge on a green
+  client→server arc, flare on each call, and send a pulse along the edge.
 - **Purple Icosahedrons**: Action Clusters (groups goal, result, feedback, status, and cancel topics/services).
 - **Interactive Inspection**: Click on any flying message particle to freeze its movement in mid-air. The right-hand **Packet Inspector** panel slides open to display the decoded JSON payload, type metadata, source/destination timestamps, and payload sizes. Click **Resume Telemetry Stream** or close the inspector to release it.
