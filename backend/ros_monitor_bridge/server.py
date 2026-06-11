@@ -1,9 +1,27 @@
 import json
 import os
+from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 
 import websockets
+
+
+def process_plain_http_request(connection, request):
+    """Answer plain HTTP requests on the WS port with a friendly 200.
+
+    Port probers (VS Code auto-forwarding in WSL, browsers preconnecting,
+    curl health checks) send ordinary HTTP requests with `Connection:
+    keep-alive`; without this hook the websockets library rejects them with a
+    full ERROR traceback on every probe.
+    """
+    connection_header = request.headers.get("Connection", "")
+    if "upgrade" not in connection_header.lower():
+        return connection.respond(
+            HTTPStatus.OK,
+            "ROS monitor bridge WebSocket endpoint - connect via ws://\n",
+        )
+    return None  # proceed with the normal WebSocket handshake
 
 
 async def websocket_broadcaster(runtime, logger):

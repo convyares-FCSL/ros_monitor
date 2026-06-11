@@ -16,7 +16,12 @@ from ros_monitor_bridge.config import (
 )
 from ros_monitor_bridge.ros_bridge import ROS_AVAILABLE, run_ros2_node
 from ros_monitor_bridge.runtime import BridgeRuntime
-from ros_monitor_bridge.server import create_ws_handler, run_http_server, websocket_broadcaster
+from ros_monitor_bridge.server import (
+    create_ws_handler,
+    process_plain_http_request,
+    run_http_server,
+    websocket_broadcaster,
+)
 from ros_monitor_bridge.simulation import SimulatedBridge
 from ros_monitor_bridge.utils import RateLimiter
 
@@ -61,7 +66,10 @@ async def async_main(config, runtime, rate_limiter, logger):
     ros_thread = None
     ws_handler = create_ws_handler(runtime, logger)
 
-    async with websockets.serve(ws_handler, config.ws_host, config.ws_port):
+    async with websockets.serve(
+        ws_handler, config.ws_host, config.ws_port,
+        process_request=process_plain_http_request,
+    ):
         logger.info(f"WebSocket server started on ws://{config.ws_host}:{config.ws_port}")
         broadcaster_task = asyncio.create_task(websocket_broadcaster(runtime, logger))
 
@@ -109,6 +117,12 @@ def parse_args():
 
 
 def resolve_frontend_dir():
+    # Allow serving an alternative frontend (e.g. the React build in
+    # frontend_new/dist) without changing code: scripts/run_visualizer_new.sh
+    override = os.environ.get("ROS_MONITOR_FRONTEND_DIR")
+    if override:
+        return os.path.abspath(override)
+
     package_dir = os.path.dirname(os.path.realpath(__file__))
     frontend_dir = os.path.abspath(os.path.join(package_dir, "..", "..", "frontend"))
     if not os.path.exists(frontend_dir):

@@ -30,9 +30,15 @@ _LIFECYCLE_TRANSITION_EVENT_TYPE = 'lifecycle_msgs/msg/TransitionEvent'
 
 
 class TopicHzTracker:
-    """Rolling-window Hz estimator using the last N inter-arrival intervals."""
+    """Sliding time-window Hz estimator (count over span).
 
-    _WINDOW = 5
+    Counting arrivals over a multi-second window is immune to executor
+    burstiness: messages that queue up and get processed back-to-back have
+    near-zero inter-arrival gaps, which made the old last-5-intervals estimate
+    report wildly inflated rates (e.g. 20 Hz for a 1 Hz topic).
+    """
+
+    _WINDOW_SEC = 3.0
 
     def __init__(self):
         self._timestamps: dict[str, deque] = {}
@@ -41,19 +47,37 @@ class TopicHzTracker:
     def record(self, topic_name: str) -> None:
         with self._lock:
             if topic_name not in self._timestamps:
-                self._timestamps[topic_name] = deque(maxlen=self._WINDOW + 1)
+                self._timestamps[topic_name] = deque(maxlen=512)
             self._timestamps[topic_name].append(time.time())
 
     def get_all_hz(self) -> dict[str, float]:
         result = {}
+        now = time.time()
+        cutoff = now - self._WINDOW_SEC
         with self._lock:
             for topic, times in self._timestamps.items():
-                if len(times) < 2:
+                # Silent topic: stop reporting so the frontend marks it stale,
+                # instead of re-broadcasting the last rate forever.
+                if not times or now - times[-1] > 2.5:
                     continue
-                intervals = [times[i] - times[i - 1] for i in range(1, len(times))]
-                avg = sum(intervals) / len(intervals)
-                if avg > 0:
-                    result[topic] = round(1.0 / avg, 2)
+                while times and times[0] < cutoff:
+                    times.popleft()
+                n = len(times)
+                if n < 2:
+                    continue
+                age = now - times[0]
+                span = times[-1] - times[0]
+                if age >= self._WINDOW_SEC * 0.6:
+                    # Established stream: exact average over the window —
+                    # burst-clustered arrivals don't skew this
+                    hz = n / self._WINDOW_SEC
+                elif span >= 0.5:
+                    # Young stream: rate from observed span
+                    hz = (n - 1) / span
+                else:
+                    # Single tight burst: conservative window average
+                    hz = n / self._WINDOW_SEC
+                result[topic] = round(hz, 2)
         return result
 
 
@@ -65,6 +89,8 @@ if ROS_AVAILABLE:
             self.rate_limiter = rate_limiter
             self.logger = logger
             self.active_subscriptions = {}
+            self.service_event_subscriptions = {}
+            self._seen_service_events = set()
             self.hz_tracker = TopicHzTracker()
             self.graph_lock = threading.Lock()
             self.graph_timer = self.create_timer(2.0, self.update_graph_topology)
@@ -103,7 +129,18 @@ if ROS_AVAILABLE:
                     action_topic_suffixes = ["/_action/feedback", "/_action/status"]
                     action_service_suffixes = ["/_action/send_goal", "/_action/get_result", "/_action/cancel_goal"]
 
+                    service_event_topics = {}
                     for topic_name, topic_types in raw_topics:
+                        # Service introspection topics — handle separately, don't show in graph
+                        if topic_name.endswith('/_service_event'):
+                            if topic_types:
+                                service_name = topic_name[:-len('/_service_event')]
+                                service_event_topics[topic_name] = {
+                                    'type': topic_types[0],
+                                    'service_name': service_name,
+                                }
+                            continue
+
                         action_name = _match_action_suffix(topic_name, action_topic_suffixes)
                         if action_name:
                             action_groups.setdefault(action_name, {"type": "unknown", "servers": set(), "clients": set()})
@@ -125,12 +162,20 @@ if ROS_AVAILABLE:
                             action_groups[action_name]["type"] = _normalize_action_type(service_types[0])
                             continue
 
+                        servers = _find_service_servers(self, raw_nodes, service_name)
+                        # No live server = uncallable. Covers stale graph-cache entries
+                        # from dead nodes AND dangling clients (e.g. lifecycle_manager
+                        # holding clients to servers that have shut down).
+                        if not servers:
+                            continue
+                        clients = _find_service_clients(self, raw_nodes, service_name)
+
                         filtered_services.append(
                             {
                                 "name": service_name,
                                 "types": service_types,
-                                "servers": _find_service_servers(self, raw_nodes, service_name),
-                                "clients": _find_service_clients(self, raw_nodes, service_name),
+                                "servers": servers,
+                                "clients": clients,
                             }
                         )
 
@@ -160,6 +205,7 @@ if ROS_AVAILABLE:
                     }
                     self.runtime.dispatch_event(graph_update)
                     self.sync_topic_subscriptions(filtered_topics)
+                    self.sync_service_event_subscriptions(service_event_topics)
                 except Exception as exc:
                     self.logger.error(f"Error updating graph topology: {exc}")
                     traceback.print_exc()
@@ -203,6 +249,55 @@ if ROS_AVAILABLE:
                     self.logger.info(f"Successfully subscribed to: {topic_name} [{topic_type}]")
                 except Exception as exc:
                     self.logger.warning(f"Could not dynamically subscribe to {topic_name} of type {topic_type}: {exc}")
+
+        def sync_service_event_subscriptions(self, service_event_topics):
+            for old_topic in list(self.service_event_subscriptions.keys()):
+                if old_topic not in service_event_topics:
+                    self.destroy_subscription(self.service_event_subscriptions[old_topic])
+                    del self.service_event_subscriptions[old_topic]
+
+            for topic_name, info in service_event_topics.items():
+                if topic_name in self.service_event_subscriptions:
+                    continue
+                try:
+                    msg_class = get_message(info['type'])
+                    callback = self.make_service_event_callback(info['service_name'])
+                    self.service_event_subscriptions[topic_name] = self.create_subscription(
+                        msg_class, topic_name, callback, 10
+                    )
+                    self.logger.info(f"Subscribed to service events: {topic_name} [{info['type']}]")
+                except Exception as exc:
+                    self.logger.warning(f"Could not subscribe to service event {topic_name}: {exc}")
+
+        def make_service_event_callback(self, service_name):
+            def callback(msg):
+                try:
+                    # service_msgs/msg/ServiceEventInfo constants:
+                    # REQUEST_SENT=0, REQUEST_RECEIVED=1, RESPONSE_SENT=2, RESPONSE_RECEIVED=3
+                    event_type = msg.info.event_type
+                    if event_type not in (0, 1):
+                        return
+
+                    if service_name not in self._seen_service_events:
+                        self._seen_service_events.add(service_name)
+                        self.logger.info(f"First service call captured on: {service_name}")
+
+                    payload = None
+                    if hasattr(msg, 'request') and len(msg.request) > 0:
+                        payload = trim_payload(message_to_ordereddict(msg.request[0]))
+
+                    self.runtime.dispatch_event({
+                        'type': 'service_invoked',
+                        'timestamp': time.time(),
+                        'data': {
+                            'service_name': service_name,
+                            'event_type': event_type,
+                            'payload': payload,
+                        },
+                    })
+                except Exception as exc:
+                    self.logger.debug(f"Failed to parse service event for {service_name}: {exc}")
+            return callback
 
         def make_subscription_callback(self, topic_name, topic_type):
             def callback(msg):
@@ -260,13 +355,24 @@ def run_ros2_node(runtime, rate_limiter, stop_event, logger):
     node = ROS2BridgeNode(runtime, rate_limiter, logger)
     executor = MultiThreadedExecutor()
     executor.add_node(node)
+
+    # spin_once() on a MultiThreadedExecutor dispatches a single callback per
+    # call and rebuilds the wait set each time — with many subscriptions it
+    # starves, messages drain in bursts, and Hz/particles misrepresent the
+    # stream. spin() processes callbacks concurrently as they arrive.
+    # The watchdog timer wakes spin() so the thread exits on shutdown.
+    def _stop_watchdog():
+        if stop_event.is_set():
+            executor.shutdown(timeout_sec=0)
+
+    node.create_timer(0.25, _stop_watchdog)
+
     try:
-        while rclpy.ok() and not stop_event.is_set():
-            executor.spin_once(timeout_sec=0.5)
+        executor.spin()
     except Exception as exc:
         logger.error(f"ROS 2 Spin interrupted: {exc}")
     finally:
-        executor.shutdown()
+        executor.shutdown(timeout_sec=1.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

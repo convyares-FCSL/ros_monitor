@@ -134,6 +134,9 @@ export function isVertexVisible(id) {
         return isItemVisible(id) && (!state.isolatedVertexIds || state.isolatedVertexIds.has(id));
     }
 
+    // Dead-end topics are fully hidden in 'hide' mode ('dim' keeps them visible)
+    if (vertex.deadEnd && state.deadEndMode === 'hide') return false;
+
     return isEntityDisplayed(vertex.type, id);
 }
 
@@ -143,15 +146,87 @@ export function formatSectionCount(items, entityType) {
 }
 
 export function applyVertexVisibility(vertex) {
-    const visible = isEntityDisplayed(vertex.type, vertex.id);
+    let visible = isVertexVisible(vertex.id);
+    // Docked service ports also inherit their host node's visibility
+    if (vertex.docked && vertex.hostId) {
+        visible = visible && isVertexVisible(vertex.hostId);
+    }
     vertex.mesh.visible = visible;
-    vertex.sprite.visible = visible;
+    if (vertex.hzSprite) vertex.hzSprite.visible = visible;
+    // Port labels are on-demand: shown only while the port or its host is selected.
+    // Edge-attached (connected) services show their label always, like topics.
+    const labelOn = !vertex.docked
+        || Boolean(vertex.edgeAttach)
+        || state.selectedEntityId === vertex.id
+        || state.selectedEntityId === vertex.hostId;
+    vertex.sprite.visible = visible && labelOn;
 }
 
 export function refreshLinkVisibility() {
     state.links.forEach((link) => {
-        link.lineMesh.visible = isVertexVisible(link.sourceId) && isVertexVisible(link.targetId);
+        let visible = isVertexVisible(link.sourceId) && isVertexVisible(link.targetId);
+        // Service edges also require at least one of their services to be visible
+        if (visible && link.serviceIds) {
+            visible = [...link.serviceIds].some((sid) => isVertexVisible(sid));
+        }
+        link.lineMesh.visible = visible;
     });
+}
+
+// --- Dead-end filtering ---
+// A topic is a dead-end *relationally*: fewer than 2 visible endpoints after the
+// current filters. (/mserve_base/base_status isn't a dead-end in the ROS graph —
+// the bridge subscribes — but with the bridge muted it renders as one.)
+// Explicitly-shown items (eye toggled on) always override the auto-prune.
+// Computed flags are consumed by isVertexVisible() ('hide' mode) and by the
+// animate() fade loop ('dim' mode). Recompute on any visibility change.
+export function applyDeadEndFiltering() {
+    let count = 0;
+    Object.values(state.vertices).forEach((v) => {
+        if (v.type !== NODE_TYPES.TOPIC) return;
+        const wasDeadEnd = v.deadEnd === true;
+        v.deadEnd = false;
+
+        if (!isEntityDisplayed(v.type, v.id)) return;        // already filtered out
+        if (state.itemVisibility[v.id] === true) return;     // user said "show"
+
+        let degree = 0;
+        for (const l of state.links) {
+            if (l.topicId !== v.id) continue;
+            const otherId = l.sourceId === v.id ? l.targetId : l.sourceId;
+            const other = state.vertices[otherId];
+            if (other && isEntityDisplayed(other.type, otherId)) degree++;
+        }
+
+        if (degree < 2) {
+            v.deadEnd = true;
+            count++;
+        } else if (wasDeadEnd && state.deadEndMode !== 'show') {
+            // Something just started talking/listening to this topic — flare it
+            v.unhideFlare = performance.now();
+        }
+    });
+
+    state.deadEndCount = count;
+    updateDeadEndButton();
+}
+
+export function cycleDeadEndMode() {
+    const order = { hide: 'dim', dim: 'show', show: 'hide' };
+    state.deadEndMode = order[state.deadEndMode] ?? 'hide';
+    updateVisibilityState();
+}
+
+export function updateDeadEndButton() {
+    const button = document.getElementById('btn-deadends');
+    if (!button) return;
+    const cfg = {
+        hide: { icon: 'eye-off',  label: 'Dead-ends: Hidden' },
+        dim:  { icon: 'sun-dim',  label: 'Dead-ends: Dimmed' },
+        show: { icon: 'eye',      label: 'Dead-ends: Shown'  },
+    }[state.deadEndMode];
+    button.innerHTML = `<i data-lucide="${cfg.icon}"></i> ${cfg.label} (${state.deadEndCount})`;
+    refreshIcons();
 }
 
 export function refreshParticleVisibility() {
@@ -200,6 +275,13 @@ export function buildIsolationSet(rootId) {
     const visibleNeighborhood = new Set([rootId]);
     const frontier = [{ id: rootId, depth: 0 }];
 
+    // Isolating a docked service port starts the walk from its host node
+    const rootVertex = state.vertices[rootId];
+    if (rootVertex?.docked && rootVertex.hostId) {
+        visibleNeighborhood.add(rootVertex.hostId);
+        frontier.push({ id: rootVertex.hostId, depth: 0 });
+    }
+
     while (frontier.length > 0) {
         const current = frontier.shift();
         if (current.depth >= 2) {
@@ -221,6 +303,13 @@ export function buildIsolationSet(rootId) {
             }
         });
     }
+
+    // Docked ports ride along with any isolated host node
+    Object.values(state.vertices).forEach((v) => {
+        if (v.docked && visibleNeighborhood.has(v.hostId)) {
+            visibleNeighborhood.add(v.id);
+        }
+    });
 
     return visibleNeighborhood;
 }
@@ -253,6 +342,7 @@ export function toggleGroupItemsVisibility(vertexIds) {
 }
 
 export function updateVisibilityState() {
+    applyDeadEndFiltering(); // before link/vertex passes: they consume the flags
     Object.values(state.vertices).forEach(applyVertexVisibility);
     refreshLinkVisibility();
     refreshParticleVisibility();

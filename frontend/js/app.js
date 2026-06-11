@@ -12,6 +12,8 @@ import {
     toggleGenericItem,
     updateVisibilityState,
     hideContextMenu,
+    cycleDeadEndMode,
+    updateDeadEndButton,
 } from './visibility.js';
 import {
     refreshSectionToggles,
@@ -80,6 +82,9 @@ function setupUIEventListeners() {
         setScenePaused(!state.isScenePaused);
     });
 
+    // Cycle dead-end handling: hide → dim → show
+    document.getElementById('btn-deadends').addEventListener('click', cycleDeadEndMode);
+
     document.getElementById('ctx-hide-item').addEventListener('click', () => {
         if (state.contextMenuTargetId) {
             state.itemVisibility[state.contextMenuTargetId] = false;
@@ -115,6 +120,7 @@ function setupUIEventListeners() {
     });
 
     updatePauseButton();
+    updateDeadEndButton();
     refreshSectionToggles();
     refreshSectionCollapseButtons();
 
