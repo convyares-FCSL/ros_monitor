@@ -2,6 +2,13 @@
 
 A functional "first-gen" prototype of a browser-based **3D ROS 2 Network Visualizer** designed to monitor a running ROS 2 system. It features a Python WebSocket bridge that queries the ROS 2 graph dynamically and handles dynamic subscriptions with rate limiting and payload trimming. The frontend renders a premium glassmorphic HUD alongside a WebGL-based 3D scene using Three.js, animating telemetry message particles along real-time connection paths.
 
+Two frontends share the same bridge (see **Frontends** below):
+
+| Directory | Stack | Run with |
+|---|---|---|
+| `frontend/` | Vanilla JS + Three.js (reference implementation) | `./scripts/run_visualizer.sh` |
+| `frontend_new/` | React + TypeScript + Vite + Tailwind | `./scripts/run_visualizer_new.sh` |
+
 ---
 
 ## Architectural Approach
@@ -36,6 +43,8 @@ To prevent ROS 2 callback execution from blocking the WebSocket event loop:
 - **Python**: 3.8 or newer
 - **Python Libraries**: `websockets` (installed via the repo-local `.venv`)
 - **ROS 2**: Humble or Jazzy (validated on Jazzy)
+- **Node.js + npm**: only required for the React frontend (`frontend_new/`); the
+  vanilla `frontend/` has no build step
 
 ---
 
@@ -123,6 +132,68 @@ Use this option inside a sourced ROS 2 workspace.
    *(Ensure port `7260` and `8765` are open on the Raspberry Pi's firewall).*
 
 If the bridge logs warnings such as `Could not dynamically subscribe ... No module named ...`, the graph is still visible, but payload decoding for those topic types is unavailable until the workspace that defines those interfaces is sourced before starting the bridge.
+
+---
+
+## Frontends
+
+Both frontends speak the same WebSocket protocol (port `8765`) and are served by
+the same bridge on port `7260`. They can be swapped without touching the backend.
+
+### `frontend/` — vanilla JS (reference implementation)
+
+The original frontend: plain ES modules, no build step, vendored Three.js bundles
+(`Line2`, `Postprocessing`). This is where features land first — service docking,
+dead-end filtering, Hz arteries, lifecycle states, etc. Served directly from the
+directory by `./scripts/run_visualizer.sh`. Edit a file, refresh the browser.
+
+### `frontend_new/` — React + TypeScript (generated with bolt.new)
+
+A React 18 + TypeScript + Vite + Tailwind rebuild implementing the same protocol
+(see `BOLT_PROMPT.md` for the full feature/behaviour specification it was built
+against). It must be **built** before the bridge can serve it.
+
+**Run it (build + serve, one command):**
+
+```bash
+./scripts/run_visualizer_new.sh              # npm install (first run) + vite build + bridge
+./scripts/run_visualizer_new.sh --skip-build # fast restart, reuse the existing dist/
+./scripts/run_visualizer_new.sh --sim        # extra args are forwarded to the bridge
+```
+
+Then open `http://localhost:7260` as usual.
+
+**Develop it (hot reload):**
+
+```bash
+# Terminal 1 — bridge only (either run script works; the frontend it serves is irrelevant)
+./scripts/run_visualizer.sh
+
+# Terminal 2 — Vite dev server with hot module reload
+cd frontend_new
+npm run dev          # opens on http://localhost:5173, connects to ws://localhost:8765
+```
+
+The app derives the bridge address from the page's hostname, so the dev server on
+`:5173` still reaches the bridge on `:8765` automatically.
+
+**Other commands** (from `frontend_new/`):
+
+```bash
+npm run build        # production build → frontend_new/dist/
+npm run typecheck    # tsc --noEmit
+npm run lint         # eslint
+```
+
+### Serving any frontend build: `ROS_MONITOR_FRONTEND_DIR`
+
+The bridge serves `frontend/` by default. The `ROS_MONITOR_FRONTEND_DIR`
+environment variable overrides that — this is how `run_visualizer_new.sh` points
+it at the React build:
+
+```bash
+ROS_MONITOR_FRONTEND_DIR=/path/to/any/static/dir ./scripts/run_visualizer.sh
+```
 
 ---
 

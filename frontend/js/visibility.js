@@ -134,6 +134,9 @@ export function isVertexVisible(id) {
         return isItemVisible(id) && (!state.isolatedVertexIds || state.isolatedVertexIds.has(id));
     }
 
+    // Dead-end topics are fully hidden in 'hide' mode ('dim' keeps them visible)
+    if (vertex.deadEnd && state.deadEndMode === 'hide') return false;
+
     return isEntityDisplayed(vertex.type, id);
 }
 
@@ -143,7 +146,7 @@ export function formatSectionCount(items, entityType) {
 }
 
 export function applyVertexVisibility(vertex) {
-    let visible = isEntityDisplayed(vertex.type, vertex.id);
+    let visible = isVertexVisible(vertex.id);
     // Docked service ports also inherit their host node's visibility
     if (vertex.docked && vertex.hostId) {
         visible = visible && isVertexVisible(vertex.hostId);
@@ -170,21 +173,60 @@ export function refreshLinkVisibility() {
     });
 }
 
-// Topics whose every edge is hidden (e.g. their only publisher is a muted infra
-// node) are dangling dead-ends — hide the sphere, label and Hz badge with them.
-// Run after refreshLinkVisibility().
-export function hideDanglingTopicVertices() {
+// --- Dead-end filtering ---
+// A topic is a dead-end *relationally*: fewer than 2 visible endpoints after the
+// current filters. (/mserve_base/base_status isn't a dead-end in the ROS graph —
+// the bridge subscribes — but with the bridge muted it renders as one.)
+// Explicitly-shown items (eye toggled on) always override the auto-prune.
+// Computed flags are consumed by isVertexVisible() ('hide' mode) and by the
+// animate() fade loop ('dim' mode). Recompute on any visibility change.
+export function applyDeadEndFiltering() {
+    let count = 0;
     Object.values(state.vertices).forEach((v) => {
-        if (v.type !== NODE_TYPES.TOPIC || !v.mesh.visible) return;
-        const hasVisibleLink = state.links.some(
-            (l) => l.lineMesh.visible && (l.sourceId === v.id || l.targetId === v.id)
-        );
-        if (!hasVisibleLink) {
-            v.mesh.visible = false;
-            v.sprite.visible = false;
-            if (v.hzSprite) v.hzSprite.visible = false;
+        if (v.type !== NODE_TYPES.TOPIC) return;
+        const wasDeadEnd = v.deadEnd === true;
+        v.deadEnd = false;
+
+        if (!isEntityDisplayed(v.type, v.id)) return;        // already filtered out
+        if (state.itemVisibility[v.id] === true) return;     // user said "show"
+
+        let degree = 0;
+        for (const l of state.links) {
+            if (l.topicId !== v.id) continue;
+            const otherId = l.sourceId === v.id ? l.targetId : l.sourceId;
+            const other = state.vertices[otherId];
+            if (other && isEntityDisplayed(other.type, otherId)) degree++;
+        }
+
+        if (degree < 2) {
+            v.deadEnd = true;
+            count++;
+        } else if (wasDeadEnd && state.deadEndMode !== 'show') {
+            // Something just started talking/listening to this topic — flare it
+            v.unhideFlare = performance.now();
         }
     });
+
+    state.deadEndCount = count;
+    updateDeadEndButton();
+}
+
+export function cycleDeadEndMode() {
+    const order = { hide: 'dim', dim: 'show', show: 'hide' };
+    state.deadEndMode = order[state.deadEndMode] ?? 'hide';
+    updateVisibilityState();
+}
+
+export function updateDeadEndButton() {
+    const button = document.getElementById('btn-deadends');
+    if (!button) return;
+    const cfg = {
+        hide: { icon: 'eye-off',  label: 'Dead-ends: Hidden' },
+        dim:  { icon: 'sun-dim',  label: 'Dead-ends: Dimmed' },
+        show: { icon: 'eye',      label: 'Dead-ends: Shown'  },
+    }[state.deadEndMode];
+    button.innerHTML = `<i data-lucide="${cfg.icon}"></i> ${cfg.label} (${state.deadEndCount})`;
+    refreshIcons();
 }
 
 export function refreshParticleVisibility() {
@@ -300,9 +342,9 @@ export function toggleGroupItemsVisibility(vertexIds) {
 }
 
 export function updateVisibilityState() {
+    applyDeadEndFiltering(); // before link/vertex passes: they consume the flags
     Object.values(state.vertices).forEach(applyVertexVisibility);
     refreshLinkVisibility();
-    hideDanglingTopicVertices();
     refreshParticleVisibility();
 
     if (state.latestGraphData) {

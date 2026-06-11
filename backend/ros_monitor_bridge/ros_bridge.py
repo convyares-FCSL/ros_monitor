@@ -30,9 +30,15 @@ _LIFECYCLE_TRANSITION_EVENT_TYPE = 'lifecycle_msgs/msg/TransitionEvent'
 
 
 class TopicHzTracker:
-    """Rolling-window Hz estimator using the last N inter-arrival intervals."""
+    """Sliding time-window Hz estimator (count over span).
 
-    _WINDOW = 5
+    Counting arrivals over a multi-second window is immune to executor
+    burstiness: messages that queue up and get processed back-to-back have
+    near-zero inter-arrival gaps, which made the old last-5-intervals estimate
+    report wildly inflated rates (e.g. 20 Hz for a 1 Hz topic).
+    """
+
+    _WINDOW_SEC = 3.0
 
     def __init__(self):
         self._timestamps: dict[str, deque] = {}
@@ -41,24 +47,37 @@ class TopicHzTracker:
     def record(self, topic_name: str) -> None:
         with self._lock:
             if topic_name not in self._timestamps:
-                self._timestamps[topic_name] = deque(maxlen=self._WINDOW + 1)
+                self._timestamps[topic_name] = deque(maxlen=512)
             self._timestamps[topic_name].append(time.time())
 
     def get_all_hz(self) -> dict[str, float]:
         result = {}
         now = time.time()
+        cutoff = now - self._WINDOW_SEC
         with self._lock:
             for topic, times in self._timestamps.items():
-                if len(times) < 2:
-                    continue
                 # Silent topic: stop reporting so the frontend marks it stale,
                 # instead of re-broadcasting the last rate forever.
-                if now - times[-1] > 2.5:
+                if not times or now - times[-1] > 2.5:
                     continue
-                intervals = [times[i] - times[i - 1] for i in range(1, len(times))]
-                avg = sum(intervals) / len(intervals)
-                if avg > 0:
-                    result[topic] = round(1.0 / avg, 2)
+                while times and times[0] < cutoff:
+                    times.popleft()
+                n = len(times)
+                if n < 2:
+                    continue
+                age = now - times[0]
+                span = times[-1] - times[0]
+                if age >= self._WINDOW_SEC * 0.6:
+                    # Established stream: exact average over the window —
+                    # burst-clustered arrivals don't skew this
+                    hz = n / self._WINDOW_SEC
+                elif span >= 0.5:
+                    # Young stream: rate from observed span
+                    hz = (n - 1) / span
+                else:
+                    # Single tight burst: conservative window average
+                    hz = n / self._WINDOW_SEC
+                result[topic] = round(hz, 2)
         return result
 
 
@@ -336,13 +355,24 @@ def run_ros2_node(runtime, rate_limiter, stop_event, logger):
     node = ROS2BridgeNode(runtime, rate_limiter, logger)
     executor = MultiThreadedExecutor()
     executor.add_node(node)
+
+    # spin_once() on a MultiThreadedExecutor dispatches a single callback per
+    # call and rebuilds the wait set each time — with many subscriptions it
+    # starves, messages drain in bursts, and Hz/particles misrepresent the
+    # stream. spin() processes callbacks concurrently as they arrive.
+    # The watchdog timer wakes spin() so the thread exits on shutdown.
+    def _stop_watchdog():
+        if stop_event.is_set():
+            executor.shutdown(timeout_sec=0)
+
+    node.create_timer(0.25, _stop_watchdog)
+
     try:
-        while rclpy.ok() and not stop_event.is_set():
-            executor.spin_once(timeout_sec=0.5)
+        executor.spin()
     except Exception as exc:
         logger.error(f"ROS 2 Spin interrupted: {exc}")
     finally:
-        executor.shutdown()
+        executor.shutdown(timeout_sec=1.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

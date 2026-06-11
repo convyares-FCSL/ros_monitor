@@ -73,7 +73,8 @@ export const GENERIC_SERVICE_SUFFIXES = [
 export const GENERIC_NODE_PREFIXES = ['/ros_websocket_bridge/', '/ros2_websocket_bridge/'];
 
 // Topics that are generic (hidden, collapsible) by default.
-export const GENERIC_DEFAULT_TOPICS = new Set(['/rosout']);
+// /parameter_events is bridge-fed on every node — always a dead-end in practice.
+export const GENERIC_DEFAULT_TOPICS = new Set(['/rosout', '/parameter_events']);
 
 // Nodes that are generic (hidden, collapsible) by default.
 // Include both slash-prefixed (simulation) and plain (real ROS 2) name forms.
@@ -129,6 +130,10 @@ export const state = {
         [NODE_TYPES.ACTION]: false
     },
     itemVisibility: {},
+    // Dead-end filtering: topics with < 2 visible endpoints after current filters.
+    // 'hide' (default) | 'dim' (ghosted, no labels) | 'show'
+    deadEndMode: 'hide',
+    deadEndCount: 0,
     genericOverrides: new Map(), // vertexId -> true/false (explicit user override)
     genericGroupExpanded: {},    // sidebar list element id -> bool (collapsed by default)
     inspectorCardExpanded: {},   // entity-info card title -> bool (collapsed by default)

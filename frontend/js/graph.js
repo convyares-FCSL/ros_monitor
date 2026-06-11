@@ -28,10 +28,11 @@ import {
 import {
     applyVertexVisibility,
     refreshLinkVisibility,
-    hideDanglingTopicVertices,
+    applyDeadEndFiltering,
     refreshParticleVisibility,
     buildIsolationSet,
     isVertexVisible,
+    isEntityDisplayed,
 } from './visibility.js';
 import { hideContextMenu } from './visibility.js';
 import { inspectEntity, recordMessageHistory } from './inspector.js';
@@ -373,8 +374,8 @@ export function handleGraphUpdate(data) {
     if (state.isolatedRootId) {
         state.isolatedVertexIds = buildIsolationSet(state.isolatedRootId);
     }
+    applyDeadEndFiltering(); // links just rebuilt — recompute before visibility passes
     refreshLinkVisibility();
-    hideDanglingTopicVertices();
     refreshParticleVisibility();
     updateHUDStats(data);
 
@@ -670,6 +671,38 @@ export function animate() {
                 if (Object.prototype.hasOwnProperty.call(state.nodePids, v.name) && state.nodePids[v.name] === null) {
                     mat.emissive.setHex(0xffffff);
                     mat.emissiveIntensity = 0.04 + 0.06 * Math.abs(Math.sin(t * 0.7));
+                }
+            }
+
+            // ── TOPIC: dead-end fade (hide/dim modes) + unhide flare ──────────────
+            if (v.type === NODE_TYPES.TOPIC) {
+                const explicit = state.itemVisibility[v.id] === true;
+                const target = (!v.deadEnd || explicit || state.deadEndMode === 'show') ? 1
+                             : state.deadEndMode === 'dim' ? 0.18
+                             : 0;
+                v.fade = v.fade ?? 1;
+                v.fade += (target - v.fade) * Math.min(1, delta * 8);
+
+                const baseVisible = isEntityDisplayed(v.type, v.id);
+                v.mesh.visible = baseVisible && v.fade > 0.02;
+                v.mesh.material.opacity = 0.85 * v.fade;
+                v.mesh.scale.setScalar(0.6 + 0.4 * v.fade);
+
+                // Dimmed/hidden dead-ends drop their labels and Hz badges
+                const labelOn = v.mesh.visible && v.fade > 0.6;
+                v.sprite.visible = labelOn;
+                if (v.hzSprite) v.hzSprite.visible = labelOn;
+
+                // Flare when a hidden dead-end gains a second endpoint —
+                // "something just started listening to this"
+                if (v.unhideFlare != null) {
+                    const e = nowMs - v.unhideFlare;
+                    if (e < 600) {
+                        v.mesh.material.emissiveIntensity = 0.4 + (1 - e / 600) * 1.4;
+                    } else {
+                        v.mesh.material.emissiveIntensity = 0.4;
+                        v.unhideFlare = null;
+                    }
                 }
             }
 
