@@ -65,6 +65,8 @@ if ROS_AVAILABLE:
             self.rate_limiter = rate_limiter
             self.logger = logger
             self.active_subscriptions = {}
+            self.service_event_subscriptions = {}
+            self._seen_service_events = set()
             self.hz_tracker = TopicHzTracker()
             self.graph_lock = threading.Lock()
             self.graph_timer = self.create_timer(2.0, self.update_graph_topology)
@@ -103,7 +105,18 @@ if ROS_AVAILABLE:
                     action_topic_suffixes = ["/_action/feedback", "/_action/status"]
                     action_service_suffixes = ["/_action/send_goal", "/_action/get_result", "/_action/cancel_goal"]
 
+                    service_event_topics = {}
                     for topic_name, topic_types in raw_topics:
+                        # Service introspection topics — handle separately, don't show in graph
+                        if topic_name.endswith('/_service_event'):
+                            if topic_types:
+                                service_name = topic_name[:-len('/_service_event')]
+                                service_event_topics[topic_name] = {
+                                    'type': topic_types[0],
+                                    'service_name': service_name,
+                                }
+                            continue
+
                         action_name = _match_action_suffix(topic_name, action_topic_suffixes)
                         if action_name:
                             action_groups.setdefault(action_name, {"type": "unknown", "servers": set(), "clients": set()})
@@ -160,6 +173,7 @@ if ROS_AVAILABLE:
                     }
                     self.runtime.dispatch_event(graph_update)
                     self.sync_topic_subscriptions(filtered_topics)
+                    self.sync_service_event_subscriptions(service_event_topics)
                 except Exception as exc:
                     self.logger.error(f"Error updating graph topology: {exc}")
                     traceback.print_exc()
@@ -203,6 +217,55 @@ if ROS_AVAILABLE:
                     self.logger.info(f"Successfully subscribed to: {topic_name} [{topic_type}]")
                 except Exception as exc:
                     self.logger.warning(f"Could not dynamically subscribe to {topic_name} of type {topic_type}: {exc}")
+
+        def sync_service_event_subscriptions(self, service_event_topics):
+            for old_topic in list(self.service_event_subscriptions.keys()):
+                if old_topic not in service_event_topics:
+                    self.destroy_subscription(self.service_event_subscriptions[old_topic])
+                    del self.service_event_subscriptions[old_topic]
+
+            for topic_name, info in service_event_topics.items():
+                if topic_name in self.service_event_subscriptions:
+                    continue
+                try:
+                    msg_class = get_message(info['type'])
+                    callback = self.make_service_event_callback(info['service_name'])
+                    self.service_event_subscriptions[topic_name] = self.create_subscription(
+                        msg_class, topic_name, callback, 10
+                    )
+                    self.logger.info(f"Subscribed to service events: {topic_name} [{info['type']}]")
+                except Exception as exc:
+                    self.logger.warning(f"Could not subscribe to service event {topic_name}: {exc}")
+
+        def make_service_event_callback(self, service_name):
+            def callback(msg):
+                try:
+                    # service_msgs/msg/ServiceEventInfo constants:
+                    # REQUEST_SENT=0, REQUEST_RECEIVED=1, RESPONSE_SENT=2, RESPONSE_RECEIVED=3
+                    event_type = msg.info.event_type
+                    if event_type not in (0, 1):
+                        return
+
+                    if service_name not in self._seen_service_events:
+                        self._seen_service_events.add(service_name)
+                        self.logger.info(f"First service call captured on: {service_name}")
+
+                    payload = None
+                    if hasattr(msg, 'request') and len(msg.request) > 0:
+                        payload = trim_payload(message_to_ordereddict(msg.request[0]))
+
+                    self.runtime.dispatch_event({
+                        'type': 'service_invoked',
+                        'timestamp': time.time(),
+                        'data': {
+                            'service_name': service_name,
+                            'event_type': event_type,
+                            'payload': payload,
+                        },
+                    })
+                except Exception as exc:
+                    self.logger.debug(f"Failed to parse service event for {service_name}: {exc}")
+            return callback
 
         def make_subscription_callback(self, topic_name, topic_type):
             def callback(msg):

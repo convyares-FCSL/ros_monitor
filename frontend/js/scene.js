@@ -147,29 +147,27 @@ export function createMeshForType(type) {
             break;
 
         case NODE_TYPES.TOPIC:
-            // Junction node — arteries defined by outbound links carry the topic identity
-            geom = new THREE.SphereGeometry(0.22, 12, 12);
+            geom = new THREE.SphereGeometry(0.44, 12, 12);
             mat = new THREE.MeshStandardMaterial({
                 color: COLORS[type],
                 metalness: 0.1,
                 roughness: 0.65,
                 emissive: COLORS[type],
-                emissiveIntensity: 0.3,
+                emissiveIntensity: 0.35,
                 transparent: true,
-                opacity: 0.55,
+                opacity: 0.75,
                 depthWrite: false,
             });
             break;
 
         case NODE_TYPES.SERVICE:
-            // Six-sided prism: hard-edged, structural, not flowing
-            geom = new THREE.CylinderGeometry(0.65, 0.65, 1.1, 6);
-            mat = new THREE.MeshStandardMaterial({
+            // Fallback only (service with no known server) — small free diamond
+            geom = new THREE.OctahedronGeometry(0.3);
+            mat = new THREE.MeshBasicMaterial({
                 color: COLORS[type],
-                metalness: 0.55,
-                roughness: 0.2,
-                emissive: COLORS[type],
-                emissiveIntensity: 0.12,
+                transparent: true,
+                opacity: 0.4,
+                depthWrite: false,
             });
             break;
 
@@ -182,6 +180,27 @@ export function createMeshForType(type) {
     const mesh = new THREE.Mesh(geom, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    return mesh;
+}
+
+export const SERVICE_PORT_IDLE_OPACITY   = 0.22;
+export const SERVICE_PORT_ACTIVE_OPACITY = 0.6;
+
+/**
+ * Service port: tiny diamond docked on a ring orbiting the host node.
+ * Idle ports are dim surface detail; they flare to full brightness on call.
+ */
+export function createServicePortMesh() {
+    const mesh = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.18),
+        new THREE.MeshBasicMaterial({
+            color: COLORS[NODE_TYPES.SERVICE],
+            transparent: true,
+            opacity: SERVICE_PORT_IDLE_OPACITY,
+            depthWrite: false,
+        })
+    );
+    mesh.castShadow = false;
     return mesh;
 }
 
@@ -334,7 +353,7 @@ export function onWindowResize() {
     // Keep Line2 shader resolution in sync so thick-line width stays accurate
     const res = new THREE.Vector2(window.innerWidth, window.innerHeight);
     state.links.forEach(link => {
-        if (link.isArtery) link.lineMesh.material.resolution.copy(res);
+        if (link.lineMesh.material.resolution) link.lineMesh.material.resolution.copy(res);
     });
 }
 

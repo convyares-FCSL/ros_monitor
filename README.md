@@ -133,3 +133,6 @@ If the bridge logs warnings such as `Could not dynamically subscribe ... No modu
 - **Green Cubes**: Services.
 - **Purple Icosahedrons**: Action Clusters (groups goal, result, feedback, status, and cancel topics/services).
 - **Interactive Inspection**: Click on any flying message particle to freeze its movement in mid-air. The right-hand **Packet Inspector** panel slides open to display the decoded JSON payload, type metadata, source/destination timestamps, and payload sizes. Click **Resume Telemetry Stream** or close the inspector to release it.
+
+
+source /home/ecm/ai-workspace/projects/mServe-STACK/ws/install/setup.bash

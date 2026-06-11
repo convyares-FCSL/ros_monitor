@@ -143,14 +143,29 @@ export function formatSectionCount(items, entityType) {
 }
 
 export function applyVertexVisibility(vertex) {
-    const visible = isEntityDisplayed(vertex.type, vertex.id);
+    let visible = isEntityDisplayed(vertex.type, vertex.id);
+    // Docked service ports also inherit their host node's visibility
+    if (vertex.docked && vertex.hostId) {
+        visible = visible && isVertexVisible(vertex.hostId);
+    }
     vertex.mesh.visible = visible;
-    vertex.sprite.visible = visible;
+    // Port labels are on-demand: shown only while the port or its host is selected.
+    // Edge-attached (connected) services show their label always, like topics.
+    const labelOn = !vertex.docked
+        || Boolean(vertex.edgeAttach)
+        || state.selectedEntityId === vertex.id
+        || state.selectedEntityId === vertex.hostId;
+    vertex.sprite.visible = visible && labelOn;
 }
 
 export function refreshLinkVisibility() {
     state.links.forEach((link) => {
-        link.lineMesh.visible = isVertexVisible(link.sourceId) && isVertexVisible(link.targetId);
+        let visible = isVertexVisible(link.sourceId) && isVertexVisible(link.targetId);
+        // Service edges also require at least one of their services to be visible
+        if (visible && link.serviceIds) {
+            visible = [...link.serviceIds].some((sid) => isVertexVisible(sid));
+        }
+        link.lineMesh.visible = visible;
     });
 }
 
@@ -200,6 +215,13 @@ export function buildIsolationSet(rootId) {
     const visibleNeighborhood = new Set([rootId]);
     const frontier = [{ id: rootId, depth: 0 }];
 
+    // Isolating a docked service port starts the walk from its host node
+    const rootVertex = state.vertices[rootId];
+    if (rootVertex?.docked && rootVertex.hostId) {
+        visibleNeighborhood.add(rootVertex.hostId);
+        frontier.push({ id: rootVertex.hostId, depth: 0 });
+    }
+
     while (frontier.length > 0) {
         const current = frontier.shift();
         if (current.depth >= 2) {
@@ -221,6 +243,13 @@ export function buildIsolationSet(rootId) {
             }
         });
     }
+
+    // Docked ports ride along with any isolated host node
+    Object.values(state.vertices).forEach((v) => {
+        if (v.docked && visibleNeighborhood.has(v.hostId)) {
+            visibleNeighborhood.add(v.id);
+        }
+    });
 
     return visibleNeighborhood;
 }

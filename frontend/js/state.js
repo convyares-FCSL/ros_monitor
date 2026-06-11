@@ -77,9 +77,14 @@ export const GENERIC_DEFAULT_TOPICS = new Set(['/rosout']);
 
 // Nodes that are generic (hidden, collapsible) by default.
 // Include both slash-prefixed (simulation) and plain (real ROS 2) name forms.
+// Infra nodes (rosbridge, rosapi) subscribe to everything and misrepresent the
+// system's real center of mass — muted by default, toggleable in BUILT-IN.
 export const GENERIC_DEFAULT_NODES = new Set([
     'ros2_websocket_bridge', '/ros2_websocket_bridge',
     'ros_websocket_bridge',  '/ros_websocket_bridge',
+    'rosbridge_websocket',   '/rosbridge_websocket',
+    'rosapi',                '/rosapi',
+    'rosapi_params',         '/rosapi_params',
 ]);
 
 // Node name prefixes that are always built-in infrastructure noise.

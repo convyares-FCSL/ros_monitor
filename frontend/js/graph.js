@@ -19,6 +19,9 @@ import {
     createLabelSprite,
     createActionOrbital,
     createHzSprite,
+    createServicePortMesh,
+    SERVICE_PORT_IDLE_OPACITY,
+    SERVICE_PORT_ACTIVE_OPACITY,
     updateHzSprite,
     updateNodeLifecycleColor,
 } from './scene.js';
@@ -62,10 +65,20 @@ export function handleGraphUpdate(data) {
         }
     });
 
-    function syncVertex(id, name, type) {
+    function syncVertex(id, name, type, hostId = null) {
         activeIds.add(id);
+
+        // Re-dock if a service's host appeared/changed (mesh style differs)
+        const wantDocked = type === NODE_TYPES.SERVICE && hostId !== null;
+        if (vertices[id] && vertices[id].type === NODE_TYPES.SERVICE
+                && Boolean(vertices[id].docked) !== wantDocked) {
+            _disposeVertex(vertices[id]);
+            delete vertices[id];
+        }
+
         if (vertices[id]) {
             vertices[id].type = type;
+            if (wantDocked) vertices[id].hostId = hostId;
             applyVertexVisibility(vertices[id]);
             return;
         }
@@ -87,10 +100,26 @@ export function handleGraphUpdate(data) {
             connections: new Set(),
             // Per-vertex animation scratch
             flashStart: null,     // service flash
+            lastInvoked: 0,       // service activity glow window
             actionProgress: 0,    // action orbital progress (0–1)
+            // Docked service-port fields
+            docked: false,
+            hostId: null,
+            portIndex: 0,
+            portCount: 1,
         };
 
-        if (type === NODE_TYPES.ACTION) {
+        if (wantDocked) {
+            entry.docked = true;
+            entry.hostId = hostId;
+            const portMesh = createServicePortMesh();
+            // Start at the host's position; the orbit pass places it each frame
+            if (vertices[hostId]) entry.pos.copy(vertices[hostId].pos);
+            portMesh.position.copy(entry.pos);
+            portMesh.userData.vertexId = id;
+            state.scene.add(portMesh);
+            entry.mesh = portMesh;
+        } else if (type === NODE_TYPES.ACTION) {
             const { coreMesh, ringMesh } = createActionOrbital();
             coreMesh.position.copy(pos);
             ringMesh.position.copy(pos);
@@ -119,9 +148,17 @@ export function handleGraphUpdate(data) {
             }
         }
 
-        const labelSprite = createLabelSprite(name, COLORS[type]);
+        // Docked ports get a short label (path minus host prefix), hidden until selected
+        const labelText = wantDocked && hostId
+            ? name.replace(new RegExp(`^/?${vertices[hostId]?.name?.replace(/^\//, '') ?? ''}/`), '')
+            : name;
+        const labelSprite = createLabelSprite(labelText, COLORS[type]);
         labelSprite.position.copy(pos);
         labelSprite.position.y += (type === NODE_TYPES.NODE ? 1.5 : 1.0);
+        if (wantDocked) {
+            labelSprite.scale.set(4.2, 1.05, 1);
+            labelSprite.visible = false;
+        }
         state.scene.add(labelSprite);
         entry.sprite = labelSprite;
 
@@ -143,7 +180,17 @@ export function handleGraphUpdate(data) {
         if ('pid' in n) state.nodePids[n.name] = n.pid;
     });
     data.topics.forEach(t  => syncVertex(`topic:${t.name}`,   t.name,  NODE_TYPES.TOPIC));
-    data.services.forEach(s => syncVertex(`service:${s.name}`, s.name, NODE_TYPES.SERVICE));
+    data.services.forEach(s => {
+        // Dock onto the first server node; no server → free-floating fallback
+        const host = s.servers?.length ? `node:${s.servers[0]}` : null;
+        syncVertex(`service:${s.name}`, s.name, NODE_TYPES.SERVICE, vertices[host] ? host : null);
+        // Connected services (live client) render larger & brighter
+        const v = vertices[`service:${s.name}`];
+        if (v) {
+            v.hasClients = (s.clients || []).length > 0;
+            v.edgeAttach = null; // recomputed below once links are rebuilt
+        }
+    });
     data.actions.forEach(a  => syncVertex(`action:${a.name}`,  a.name,  NODE_TYPES.ACTION));
 
     // Remove vertices no longer in the topology
@@ -172,27 +219,22 @@ export function handleGraphUpdate(data) {
 
         let lineMesh;
         if (isArtery) {
-            // Flowing data artery — Line2 (thick screen-space lines) with animated dashOffset
+            // Flowing data artery — Line2 (thick screen-space lines)
             const hzInfo    = state.topicHz[topicId.replace('topic:', '')];
             const health    = hzInfo?.health ?? HZ_HEALTH.UNKNOWN;
             const lineColor = _arteryColor(health);
             const opacity   = _hzToOpacity(hzInfo?.hz ?? 0);
+            const lateral   = _lateralFor(sourceId, targetId);
 
             const mat = new THREE.LineMaterial({
                 color: lineColor,
-                linewidth: 3.5,
-                dashed: true,
-                dashSize: 0.45,
-                gapSize: 0.18,
+                linewidth: _hzToWidth(hzInfo?.hz ?? 0),
                 transparent: true,
                 opacity,
                 resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
             });
             const geom = new THREE.LineGeometry();
-            geom.setPositions([
-                vertices[sourceId].pos.x, vertices[sourceId].pos.y, vertices[sourceId].pos.z,
-                vertices[targetId].pos.x, vertices[targetId].pos.y, vertices[targetId].pos.z,
-            ]);
+            geom.setPositions(_curvePositions(vertices[sourceId].pos, vertices[targetId].pos, lateral));
             lineMesh = new THREE.Line2(geom, mat);
             lineMesh.computeLineDistances();
 
@@ -201,21 +243,28 @@ export function handleGraphUpdate(data) {
             const flowSpeed  = _hzToFlowSpeed(hzInfo?.hz ?? 0);
 
             state.scene.add(lineMesh);
-            links.push({ sourceId, targetId, lineMesh, topicId, isArtery: true, flowOffset, flowSpeed });
+            links.push({ sourceId, targetId, lineMesh, topicId, isArtery: true, flowOffset, flowSpeed, lateral });
         } else {
-            // Static structural connection (services, actions)
-            const type   = sourceId.split(':')[0];
-            const color  = type === 'service' ? COLORS[NODE_TYPES.SERVICE]
-                         : type === 'action'  ? COLORS[NODE_TYPES.ACTION]
+            // Static structural connection (services, actions) — same Line2 style as arteries
+            const srcType = sourceId.split(':')[0];
+            const tgtType = targetId.split(':')[0];
+            const color  = (srcType === 'service' || tgtType === 'service') ? COLORS[NODE_TYPES.SERVICE]
+                         : (srcType === 'action'  || tgtType === 'action')  ? COLORS[NODE_TYPES.ACTION]
                          : 0x475569;
-            const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.35 });
-            const geom = new THREE.BufferGeometry().setFromPoints([
-                vertices[sourceId].pos,
-                vertices[targetId].pos,
-            ]);
-            lineMesh = new THREE.Line(geom, mat);
+            const mat = new THREE.LineMaterial({
+                color,
+                linewidth: 4,
+                transparent: true,
+                opacity: 0.65,
+                resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+            });
+            const lateral = _lateralFor(sourceId, targetId);
+            const geom = new THREE.LineGeometry();
+            geom.setPositions(_curvePositions(vertices[sourceId].pos, vertices[targetId].pos, lateral));
+            lineMesh = new THREE.Line2(geom, mat);
+            lineMesh.computeLineDistances();
             state.scene.add(lineMesh);
-            links.push({ sourceId, targetId, lineMesh, topicId: null, isArtery: false });
+            links.push({ sourceId, targetId, lineMesh, topicId: null, isArtery: false, lateral });
         }
     }
 
@@ -225,16 +274,93 @@ export function handleGraphUpdate(data) {
         t.subscribers.forEach(sub => addLink(tid, `node:${sub}`, tid));
     });
 
+    // Service edges exist only when a client is connected: node→node, dashed.
+    // Orphan services (no client) are just dim ports on their host ring — no edge.
     data.services.forEach(s => {
         const sid = `service:${s.name}`;
-        s.servers.forEach(srv => addLink(`node:${srv}`, sid));
-        (s.clients || []).forEach(cli => addLink(`node:${cli}`, sid));
+        (s.clients || []).forEach(cli => {
+            s.servers.forEach(srv => {
+                if (cli === srv) return; // self-call: port flare covers it
+                addServiceLink(`node:${cli}`, `node:${srv}`, sid);
+            });
+        });
     });
+
+    function addServiceLink(clientId, serverId, serviceId) {
+        if (!vertices[clientId] || !vertices[serverId]) return;
+        // One edge per node pair even if several services connect them
+        if (links.some(l => l.serviceId && l.sourceId === clientId && l.targetId === serverId)) {
+            links.find(l => l.serviceId && l.sourceId === clientId && l.targetId === serverId)
+                .serviceIds.add(serviceId);
+            return;
+        }
+
+        vertices[clientId].connections.add(serverId);
+        vertices[serverId].connections.add(clientId);
+
+        // Topic-artery styling in service green — connected services are first-class
+        const mat = new THREE.LineMaterial({
+            color: COLORS[NODE_TYPES.SERVICE],
+            linewidth: 4,
+            transparent: true,
+            opacity: 0.7,
+            resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+        });
+        const lateral = _lateralFor(clientId, serverId);
+        const geom = new THREE.LineGeometry();
+        geom.setPositions(_curvePositions(vertices[clientId].pos, vertices[serverId].pos, lateral));
+        const lineMesh = new THREE.Line2(geom, mat);
+        lineMesh.computeLineDistances();
+        state.scene.add(lineMesh);
+        links.push({
+            sourceId: clientId, targetId: serverId, lineMesh,
+            topicId: null, isArtery: false,
+            serviceId, serviceIds: new Set([serviceId]),
+            lateral,
+        });
+    }
 
     data.actions.forEach(a => {
         const aid = `action:${a.name}`;
         a.servers.forEach(srv => addLink(aid, `node:${srv}`));
         a.clients.forEach(cli => addLink(`node:${cli}`, aid));
+    });
+
+    // Connected services sit ON their client→server edge like a topic junction;
+    // multiple services sharing one edge spread out along it.
+    links.forEach(link => {
+        if (!link.serviceIds) return;
+        const ids = [...link.serviceIds];
+        ids.forEach((sid, i) => {
+            const v = vertices[sid];
+            if (!v) return;
+            v.edgeAttach = {
+                sourceId: link.sourceId,
+                targetId: link.targetId,
+                lateral: link.lateral,
+                t: (i + 1) / (ids.length + 1),
+            };
+            // Mid-edge junctions show the full service path (ring ports use short names)
+            if (!v.labelIsFull) {
+                state.scene.remove(v.sprite);
+                if (v.sprite.material.map) v.sprite.material.map.dispose();
+                v.sprite.material.dispose();
+                v.sprite = createLabelSprite(v.name, COLORS[NODE_TYPES.SERVICE]);
+                v.sprite.visible = false; // animate() drives visibility
+                state.scene.add(v.sprite);
+                v.labelIsFull = true;
+            }
+        });
+    });
+
+    // Assign stable ring slots for the remaining (orphan) docked ports
+    const portsByHost = {};
+    Object.values(vertices).forEach(v => {
+        if (v.docked && !v.edgeAttach) (portsByHost[v.hostId] ??= []).push(v);
+    });
+    Object.values(portsByHost).forEach(ports => {
+        ports.sort((a, b) => a.name.localeCompare(b.name));
+        ports.forEach((p, i) => { p.portIndex = i; p.portCount = ports.length; });
     });
 
     if (state.isolatedRootId) {
@@ -316,11 +442,33 @@ export function handleNodeParams(data) {
 // ---------------------------------------------------------------------------
 
 export function handleServiceInvoked(data) {
+    // Flare the docked port and open its activity-glow window
     const serviceId = `service:${data.service_name}`;
     const vertex    = state.vertices[serviceId];
     if (vertex?.type === NODE_TYPES.SERVICE) {
-        vertex.flashStart = performance.now();
+        vertex.flashStart  = performance.now();
+        vertex.lastInvoked = performance.now();
     }
+
+    // Pulse travels the client → server edge: the neural "firing" moment
+    state.links.forEach(link => {
+        if (!link.serviceIds?.has(serviceId)) return;
+        const src = state.vertices[link.sourceId];
+        const tgt = state.vertices[link.targetId];
+        if (src && tgt) _spawnArteryParticle(src, tgt, COLORS[NODE_TYPES.SERVICE]);
+    });
+
+    // Record call to history so the inspector can show it
+    // ServiceEventInfo: REQUEST_SENT=0, REQUEST_RECEIVED=1
+    const eventLabel = data.event_type === 0 ? 'REQUEST_SENT' : 'REQUEST_RECEIVED';
+    recordMessageHistory({
+        topic: `${data.service_name}/_service_event`,
+        msg_type: eventLabel,
+        timestamp: data.timestamp ?? (Date.now() / 1000),
+        payload: data.payload,
+        dropped_payload: data.payload === null,
+        size_bytes: data.payload ? JSON.stringify(data.payload).length : 0,
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +521,9 @@ export function handleMessageEvent(data) {
 function updateGraphLayout() {
     const vertices = state.vertices;
     const links    = state.links;
-    const keys     = Object.keys(vertices);
+    // Docked service ports don't participate in the force layout —
+    // they're positioned on their host node's ring each frame.
+    const keys     = Object.keys(vertices).filter(id => !vertices[id].docked);
     const count    = keys.length;
     if (count === 0) return;
 
@@ -428,19 +578,9 @@ function updateGraphLayout() {
         const u = vertices[link.sourceId];
         const v = vertices[link.targetId];
         if (!u || !v) return;
-        if (link.isArtery) {
-            // Line2 geometry uses setPositions() rather than direct attribute mutation
-            link.lineMesh.geometry.setPositions([
-                u.pos.x, u.pos.y, u.pos.z,
-                v.pos.x, v.pos.y, v.pos.z,
-            ]);
-            link.lineMesh.computeLineDistances();
-        } else {
-            const pos = link.lineMesh.geometry.attributes.position.array;
-            pos[0] = u.pos.x; pos[1] = u.pos.y; pos[2] = u.pos.z;
-            pos[3] = v.pos.x; pos[4] = v.pos.y; pos[5] = v.pos.z;
-            link.lineMesh.geometry.attributes.position.needsUpdate = true;
-        }
+        // All links are curved Line2 polylines — rebuild the arc each frame
+        link.lineMesh.geometry.setPositions(_curvePositions(u.pos, v.pos, link.lateral ?? 0));
+        link.lineMesh.computeLineDistances();
     });
 }
 
@@ -522,22 +662,74 @@ export function animate() {
                 }
             }
 
-            // ── SERVICE: hexagonal prism + emissive spike on invocation ───────────
+            // ── SERVICE: edge junction (connected) or docked ring port (orphan) ───
             if (v.type === NODE_TYPES.SERVICE) {
-                v.mesh.rotation.x += 0.007;
-                v.mesh.rotation.y += 0.007;
+                if (v.edgeAttach) {
+                    // Topic-style junction: octahedron rides the client→server arc
+                    const src = state.vertices[v.edgeAttach.sourceId];
+                    const tgt = state.vertices[v.edgeAttach.targetId];
+                    if (src && tgt) {
+                        _curvePoint(src.pos, tgt.pos, v.edgeAttach.lateral, v.edgeAttach.t, v.pos);
+                        v.mesh.position.copy(v.pos);
+                        v.sprite.position.copy(v.pos);
+                        v.sprite.position.y += 0.6;
+                        v.sprite.scale.set(6, 1.5, 1);
 
+                        const vis = isVertexVisible(v.id)
+                                 && isVertexVisible(v.edgeAttach.sourceId)
+                                 && isVertexVisible(v.edgeAttach.targetId);
+                        v.mesh.visible = vis;
+                        v.sprite.visible = vis; // label always on, like topics
+                    }
+                } else if (v.docked) {
+                    const host = state.vertices[v.hostId];
+                    if (host) {
+                        // Slow orbit around the host node, gentle per-port bob
+                        const angle = (v.portIndex / Math.max(v.portCount, 1)) * Math.PI * 2 + t * 0.12;
+                        const R = 1.9;
+                        v.pos.set(
+                            host.pos.x + Math.cos(angle) * R,
+                            host.pos.y + Math.sin(t * 1.2 + v.portIndex) * 0.12,
+                            host.pos.z + Math.sin(angle) * R
+                        );
+                        v.mesh.position.copy(v.pos);
+                        v.sprite.position.copy(v.pos);
+                        v.sprite.position.y += 0.45;
+
+                        // Ports inherit host visibility; labels only on selection
+                        const vis = isVertexVisible(v.id) && isVertexVisible(v.hostId);
+                        v.mesh.visible = vis;
+                        const selected = state.selectedEntityId === v.id
+                                      || state.selectedEntityId === v.hostId;
+                        v.sprite.visible = vis && selected;
+                    }
+                }
+
+                v.mesh.rotation.y += 0.012;
+
+                // Connected services (live client) are larger, brighter octahedra;
+                // edge junctions match topic-sphere prominence
+                const baseScale   = v.hasClients ? 1.9 : 1.0;
+                const idleOpacity = v.edgeAttach ? 0.85
+                                  : v.hasClients ? 0.5
+                                  : SERVICE_PORT_IDLE_OPACITY;
+
+                const mat = v.mesh.material;
                 if (v.flashStart !== null) {
                     const elapsed = nowMs - v.flashStart;
-                    if (elapsed < 200) {
-                        const p = 1.0 - elapsed / 200;            // 1 → 0 over 200 ms
-                        v.mesh.material.emissiveIntensity = 0.12 + p * 1.9;
-                        v.mesh.scale.setScalar(1.0 + p * 0.5);
+                    if (elapsed < 450) {
+                        const p = 1.0 - elapsed / 450;
+                        mat.opacity = idleOpacity + p * (1.0 - idleOpacity);
+                        v.mesh.scale.setScalar(baseScale * (1.0 + p * 1.4));
                     } else {
-                        v.mesh.material.emissiveIntensity = 0.12;
-                        v.mesh.scale.setScalar(1.0);
+                        v.mesh.scale.setScalar(baseScale);
                         v.flashStart = null;
                     }
+                } else {
+                    // Recently-called services keep a soft active glow for 8 s
+                    const active = nowMs - (v.lastInvoked ?? 0) < 8000;
+                    mat.opacity = active ? Math.max(SERVICE_PORT_ACTIVE_OPACITY, idleOpacity) : idleOpacity;
+                    v.mesh.scale.setScalar(baseScale);
                 }
             }
 
@@ -557,13 +749,6 @@ export function animate() {
             }
         });
 
-        // ── Artery flow animation ─────────────────────────────────────────────────
-        state.links.forEach(link => {
-            if (!link.isArtery) return;
-            // Decrement offset to flow from source → destination
-            link.flowOffset -= link.flowSpeed * delta;
-            link.lineMesh.material.dashOffset = link.flowOffset;
-        });
 
         // ── Drain legacy particles (pre-refactor residue) ─────────────────────────
         for (let i = state.activeParticles.length - 1; i >= 0; i--) {
@@ -576,14 +761,24 @@ export function animate() {
                 p.mesh.material.dispose();
                 state.activeParticles.splice(i, 1);
             } else {
-                p.mesh.position.lerpVectors(
-                    p.leg === 1 ? p.startNode.pos : p.midNode.pos,
-                    p.leg === 1 ? p.midNode.pos   : (p.endNode?.pos ?? p.midNode.pos),
-                    p.progress
-                );
+                const from = p.leg === 1 ? p.startNode.pos : p.midNode.pos;
+                const to   = p.leg === 1 ? p.midNode.pos   : (p.endNode?.pos ?? p.midNode.pos);
+                _curvePoint(from, to, p.lateral ?? 0, p.progress, p.mesh.position);
             }
         }
     }
+
+    // ── Depth cue: labels fade with camera distance ───────────────────────────
+    Object.values(state.vertices).forEach(v => {
+        if (v.sprite?.visible) {
+            const d = state.camera.position.distanceTo(v.sprite.position);
+            v.sprite.material.opacity = Math.min(Math.max(1.5 - d / 40, 0.12), 1);
+        }
+        if (v.hzSprite?.visible) {
+            const d = state.camera.position.distanceTo(v.hzSprite.position);
+            v.hzSprite.material.opacity = Math.min(Math.max(1.5 - d / 40, 0.12), 1);
+        }
+    });
 
     // Staleness check every ~60 frames
     if (++_staleCheckFrame >= 60) {
@@ -669,6 +864,7 @@ function _updateTopicArteryLinks(topicName, hz, health) {
         if (link.topicId !== topicId) return;
         link.lineMesh.material.color.setHex(linkColor);
         link.lineMesh.material.opacity = opacity;
+        link.lineMesh.material.linewidth = _hzToWidth(hz);
         link.flowSpeed = flowSpeed;
     });
 }
@@ -686,18 +882,74 @@ function _hzToFlowSpeed(hz) {
     return Math.max(0.15, hz * 0.09);
 }
 
+// Edge weight = bandwidth: higher publish rate → thicker artery
+function _hzToWidth(hz) {
+    return Math.min(2.2 + hz * 0.35, 7.0);
+}
+
+// Deterministic per-edge lateral offset in [-1, 1] so parallel edges separate
+function _lateralFor(a, b) {
+    const s = `${a}|${b}`;
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return (((h % 2001) + 2001) % 2001) / 1000 - 1;
+}
+
+// Quadratic-bezier arc between two points: slight sideways bulge + upward lift.
+// Returns a flat [x,y,z,...] array for LineGeometry.setPositions().
+const _CURVE_SEGMENTS = 10;
+function _curvePositions(u, v, lateral) {
+    const dx = v.x - u.x, dy = v.y - u.y, dz = v.z - u.z;
+    const dist  = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    const bulge = Math.min(dist * 0.18, 2.2);
+    // Perpendicular in the XZ plane for the sideways component
+    const px = -dz / dist, pz = dx / dist;
+    const mx = (u.x + v.x) / 2 + px * lateral * bulge;
+    const my = (u.y + v.y) / 2 + bulge * 0.35;
+    const mz = (u.z + v.z) / 2 + pz * lateral * bulge;
+
+    const out = [];
+    for (let i = 0; i <= _CURVE_SEGMENTS; i++) {
+        const t = i / _CURVE_SEGMENTS;
+        const it = 1 - t;
+        out.push(
+            it * it * u.x + 2 * it * t * mx + t * t * v.x,
+            it * it * u.y + 2 * it * t * my + t * t * v.y,
+            it * it * u.z + 2 * it * t * mz + t * t * v.z,
+        );
+    }
+    return out;
+}
+
+// Point along the same arc at parameter t — used so pulses ride the curve
+function _curvePoint(u, v, lateral, t, out) {
+    const dx = v.x - u.x, dy = v.y - u.y, dz = v.z - u.z;
+    const dist  = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    const bulge = Math.min(dist * 0.18, 2.2);
+    const px = -dz / dist, pz = dx / dist;
+    const mx = (u.x + v.x) / 2 + px * lateral * bulge;
+    const my = (u.y + v.y) / 2 + bulge * 0.35;
+    const mz = (u.z + v.z) / 2 + pz * lateral * bulge;
+    const it = 1 - t;
+    out.set(
+        it * it * u.x + 2 * it * t * mx + t * t * v.x,
+        it * it * u.y + 2 * it * t * my + t * t * v.y,
+        it * it * u.z + 2 * it * t * mz + t * t * v.z,
+    );
+}
+
 function _hzToOpacity(hz) {
-    // Higher bandwidth = brighter artery
-    return Math.min(0.3 + (hz / 10.0) * 0.5, 0.82);
+    // Solid at baseline, brighter at high Hz
+    return Math.min(0.65 + (hz / 10.0) * 0.25, 0.92);
 }
 
 // Spawn a small bright dot that travels from-vertex → to-vertex over the artery.
 // Throttled per topic to avoid flooding at high Hz.
-function _spawnArteryParticle(fromVertex, toVertex) {
+function _spawnArteryParticle(fromVertex, toVertex, color = COLORS[NODE_TYPES.TOPIC]) {
     if (!fromVertex || !toVertex) return;
-    const geom = new THREE.SphereGeometry(0.14, 5, 5);
+    const geom = new THREE.SphereGeometry(0.2, 8, 8);
     const mat  = new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.88,
+        color, transparent: true, opacity: 0.95,
     });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(fromVertex.pos);
@@ -707,6 +959,7 @@ function _spawnArteryParticle(fromVertex, toVertex) {
         startNode: fromVertex,
         midNode:   toVertex,
         endNode:   null,
+        lateral:   _lateralFor(fromVertex.id, toVertex.id), // follow the edge arc
         leg: 1, progress: 0, speed: 0.06, paused: false,
     });
 }

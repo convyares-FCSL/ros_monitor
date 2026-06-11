@@ -264,8 +264,8 @@ function renderServiceInspector(vertex, groups, selectedEntry) {
         </section>
         ${groups.length ? renderGroupedInspector(vertex, groups, selectedEntry) : `
             <section class="data-viewer-panel">
-                <div class="data-viewer-title">Service Inspector</div>
-                <div class="history-empty">This service has no recent message history in the current bridge stream. Service topology is still shown above.</div>
+                <div class="data-viewer-title">Service Calls</div>
+                <div class="history-empty">No calls captured yet. Enable service introspection on the server node to monitor live calls.</div>
             </section>
         `}
     `;
@@ -568,6 +568,14 @@ function getEntityHistoryGroups(vertex) {
                     .forEach((topicName) => addTopicName(topicName));
             }
         });
+
+        // Service calls where this node is server or client
+        (state.latestGraphData.services || []).forEach((service) => {
+            if (service.servers?.includes(vertex.name) || (service.clients || []).includes(vertex.name)) {
+                const eventTopic = `${service.name}/_service_event`;
+                if (state.messageHistory[eventTopic]) addTopicName(eventTopic);
+            }
+        });
     }
 
     if (vertex.type === NODE_TYPES.ACTION) {
@@ -575,6 +583,10 @@ function getEntityHistoryGroups(vertex) {
             .filter((topicName) => topicName.startsWith(`${vertex.name}/_action/`))
             .sort((a, b) => (state.topicOrderIndex[a] ?? Number.MAX_SAFE_INTEGER) - (state.topicOrderIndex[b] ?? Number.MAX_SAFE_INTEGER))
             .forEach((topicName) => addTopicName(topicName));
+    }
+
+    if (vertex.type === NODE_TYPES.SERVICE) {
+        addTopicName(`${vertex.name}/_service_event`);
     }
 
     const orderedTopicNames = topicNames.slice().sort((a, b) => (state.topicOrderIndex[a] ?? Number.MAX_SAFE_INTEGER) - (state.topicOrderIndex[b] ?? Number.MAX_SAFE_INTEGER));
