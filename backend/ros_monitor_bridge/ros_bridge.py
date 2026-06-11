@@ -46,9 +46,14 @@ class TopicHzTracker:
 
     def get_all_hz(self) -> dict[str, float]:
         result = {}
+        now = time.time()
         with self._lock:
             for topic, times in self._timestamps.items():
                 if len(times) < 2:
+                    continue
+                # Silent topic: stop reporting so the frontend marks it stale,
+                # instead of re-broadcasting the last rate forever.
+                if now - times[-1] > 2.5:
                     continue
                 intervals = [times[i] - times[i - 1] for i in range(1, len(times))]
                 avg = sum(intervals) / len(intervals)
@@ -138,12 +143,20 @@ if ROS_AVAILABLE:
                             action_groups[action_name]["type"] = _normalize_action_type(service_types[0])
                             continue
 
+                        servers = _find_service_servers(self, raw_nodes, service_name)
+                        # No live server = uncallable. Covers stale graph-cache entries
+                        # from dead nodes AND dangling clients (e.g. lifecycle_manager
+                        # holding clients to servers that have shut down).
+                        if not servers:
+                            continue
+                        clients = _find_service_clients(self, raw_nodes, service_name)
+
                         filtered_services.append(
                             {
                                 "name": service_name,
                                 "types": service_types,
-                                "servers": _find_service_servers(self, raw_nodes, service_name),
-                                "clients": _find_service_clients(self, raw_nodes, service_name),
+                                "servers": servers,
+                                "clients": clients,
                             }
                         )
 

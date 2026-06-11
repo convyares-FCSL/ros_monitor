@@ -149,6 +149,7 @@ export function applyVertexVisibility(vertex) {
         visible = visible && isVertexVisible(vertex.hostId);
     }
     vertex.mesh.visible = visible;
+    if (vertex.hzSprite) vertex.hzSprite.visible = visible;
     // Port labels are on-demand: shown only while the port or its host is selected.
     // Edge-attached (connected) services show their label always, like topics.
     const labelOn = !vertex.docked
@@ -166,6 +167,23 @@ export function refreshLinkVisibility() {
             visible = [...link.serviceIds].some((sid) => isVertexVisible(sid));
         }
         link.lineMesh.visible = visible;
+    });
+}
+
+// Topics whose every edge is hidden (e.g. their only publisher is a muted infra
+// node) are dangling dead-ends — hide the sphere, label and Hz badge with them.
+// Run after refreshLinkVisibility().
+export function hideDanglingTopicVertices() {
+    Object.values(state.vertices).forEach((v) => {
+        if (v.type !== NODE_TYPES.TOPIC || !v.mesh.visible) return;
+        const hasVisibleLink = state.links.some(
+            (l) => l.lineMesh.visible && (l.sourceId === v.id || l.targetId === v.id)
+        );
+        if (!hasVisibleLink) {
+            v.mesh.visible = false;
+            v.sprite.visible = false;
+            if (v.hzSprite) v.hzSprite.visible = false;
+        }
     });
 }
 
@@ -284,6 +302,7 @@ export function toggleGroupItemsVisibility(vertexIds) {
 export function updateVisibilityState() {
     Object.values(state.vertices).forEach(applyVertexVisibility);
     refreshLinkVisibility();
+    hideDanglingTopicVertices();
     refreshParticleVisibility();
 
     if (state.latestGraphData) {

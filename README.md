@@ -126,13 +126,80 @@ If the bridge logs warnings such as `Could not dynamically subscribe ... No modu
 
 ---
 
+## Monitoring the mServe stack
+
+The bridge must be started from a shell that has both ROS 2 **and** the mServe
+workspace sourced — otherwise custom interface types (e.g. `interfaces/srv/Drive`)
+cannot be decoded and those subscriptions are skipped:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/ecm/ai-workspace/projects/mServe-STACK/ws/install/setup.bash
+./scripts/run_visualizer.sh
+```
+
+If the mServe workspace has not been built yet:
+
+```bash
+cd /home/ecm/ai-workspace/projects/mServe-STACK/ws
+colcon build --packages-select interfaces utils mserve_drivechain mserve_base
+```
+
+---
+
+## Service call visibility (introspection)
+
+Topics can be observed by simply subscribing, but **service calls are point-to-point
+request/reply** — they cannot be sniffed passively. The visualizer relies on ROS 2
+**service introspection** (Iron+): when a server (or client) opts in, every
+request/response is mirrored onto a regular `<service>/_service_event` topic, which
+the bridge auto-detects and subscribes to.
+
+**This is opt-in per service, in the node's code.** No introspection → service
+topology is still shown (servers/clients/types), but live calls are invisible.
+Enabling it on the **server side alone is enough** — the server emits a
+`REQUEST_RECEIVED` event no matter who calls (another node, rosbridge, or
+`ros2 service call`).
+
+rclpy:
+
+```python
+from rclpy.qos import qos_profile_system_default
+from rclpy.service_introspection import ServiceIntrospectionState
+
+srv = self.create_service(AddTwoInts, '/my/service', self.handle)
+srv.configure_introspection(
+    self.get_clock(), qos_profile_system_default,
+    ServiceIntrospectionState.CONTENTS)  # METADATA = events without payloads
+```
+
+rclcpp:
+
+```cpp
+#include <rcl/service_introspection.h>
+
+service_ = create_service<Trigger>("/my/service", cb);
+service_->configure_introspection(
+    get_clock(), rclcpp::SystemDefaultsQoS(), RCL_SERVICE_INTROSPECTION_CONTENTS);
+```
+
+Already enabled in this ecosystem: the demo `math_service`/`math_client`, and all
+four `mserve_drivechain` services (`/connect`, `/stop`, `/drive`, `/set_motor_id`).
+
+Verify after starting the stack:
+
+```bash
+ros2 topic list | grep _service_event
+```
+
+---
+
 ## Visual UX Reference
 
 - **Blue/Teal Cylinders**: ROS 2 Nodes.
-- **Orange Spheres**: Active Topics.
-- **Green Cubes**: Services.
+- **Orange Spheres**: Active Topics (line thickness tracks publish rate).
+- **Green Octahedra**: Services. Orphan services (no client) sit as dim ports on a
+  ring orbiting their host node; connected services sit mid-edge on a green
+  client→server arc, flare on each call, and send a pulse along the edge.
 - **Purple Icosahedrons**: Action Clusters (groups goal, result, feedback, status, and cancel topics/services).
 - **Interactive Inspection**: Click on any flying message particle to freeze its movement in mid-air. The right-hand **Packet Inspector** panel slides open to display the decoded JSON payload, type metadata, source/destination timestamps, and payload sizes. Click **Resume Telemetry Stream** or close the inspector to release it.
-
-
-source /home/ecm/ai-workspace/projects/mServe-STACK/ws/install/setup.bash

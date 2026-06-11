@@ -147,15 +147,15 @@ export function createMeshForType(type) {
             break;
 
         case NODE_TYPES.TOPIC:
-            geom = new THREE.SphereGeometry(0.44, 12, 12);
+            geom = new THREE.SphereGeometry(0.7, 14, 14);
             mat = new THREE.MeshStandardMaterial({
                 color: COLORS[type],
                 metalness: 0.1,
                 roughness: 0.65,
                 emissive: COLORS[type],
-                emissiveIntensity: 0.35,
+                emissiveIntensity: 0.4,
                 transparent: true,
-                opacity: 0.75,
+                opacity: 0.85,
                 depthWrite: false,
             });
             break;

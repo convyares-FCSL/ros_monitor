@@ -28,6 +28,7 @@ import {
 import {
     applyVertexVisibility,
     refreshLinkVisibility,
+    hideDanglingTopicVertices,
     refreshParticleVisibility,
     buildIsolationSet,
     isVertexVisible,
@@ -274,26 +275,33 @@ export function handleGraphUpdate(data) {
         t.subscribers.forEach(sub => addLink(tid, `node:${sub}`, tid));
     });
 
-    // Service edges exist only when a client is connected: node→node, dashed.
+    // Service edges exist only when a client is connected: node→node.
     // Orphan services (no client) are just dim ports on their host ring — no edge.
+    // Multiple services between the same node pair fan out as separate arcs.
+    const pairServices = {};
     data.services.forEach(s => {
         const sid = `service:${s.name}`;
         (s.clients || []).forEach(cli => {
             s.servers.forEach(srv => {
                 if (cli === srv) return; // self-call: port flare covers it
-                addServiceLink(`node:${cli}`, `node:${srv}`, sid);
+                const key = `node:${cli}|node:${srv}`;
+                (pairServices[key] ??= []).push(sid);
             });
         });
     });
+    Object.entries(pairServices).forEach(([key, sids]) => {
+        const [clientId, serverId] = key.split('|');
+        sids.forEach((sid, i) => {
+            // Fan: spread arcs symmetrically; single edge keeps a gentle bow
+            const lateral = sids.length === 1
+                ? _lateralFor(clientId, serverId) * 0.5
+                : (i / (sids.length - 1)) * 2 - 1;
+            addServiceLink(clientId, serverId, sid, lateral);
+        });
+    });
 
-    function addServiceLink(clientId, serverId, serviceId) {
+    function addServiceLink(clientId, serverId, serviceId, lateral) {
         if (!vertices[clientId] || !vertices[serverId]) return;
-        // One edge per node pair even if several services connect them
-        if (links.some(l => l.serviceId && l.sourceId === clientId && l.targetId === serverId)) {
-            links.find(l => l.serviceId && l.sourceId === clientId && l.targetId === serverId)
-                .serviceIds.add(serviceId);
-            return;
-        }
 
         vertices[clientId].connections.add(serverId);
         vertices[serverId].connections.add(clientId);
@@ -306,7 +314,6 @@ export function handleGraphUpdate(data) {
             opacity: 0.7,
             resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
         });
-        const lateral = _lateralFor(clientId, serverId);
         const geom = new THREE.LineGeometry();
         geom.setPositions(_curvePositions(vertices[clientId].pos, vertices[serverId].pos, lateral));
         const lineMesh = new THREE.Line2(geom, mat);
@@ -326,8 +333,8 @@ export function handleGraphUpdate(data) {
         a.clients.forEach(cli => addLink(`node:${cli}`, aid));
     });
 
-    // Connected services sit ON their client→server edge like a topic junction;
-    // multiple services sharing one edge spread out along it.
+    // Connected services sit ON their client→server arc like a topic junction
+    // (one arc per service — same-pair arcs fan out via their lateral offsets).
     links.forEach(link => {
         if (!link.serviceIds) return;
         const ids = [...link.serviceIds];
@@ -367,6 +374,7 @@ export function handleGraphUpdate(data) {
         state.isolatedVertexIds = buildIsolationSet(state.isolatedRootId);
     }
     refreshLinkVisibility();
+    hideDanglingTopicVertices();
     refreshParticleVisibility();
     updateHUDStats(data);
 
@@ -452,10 +460,10 @@ export function handleServiceInvoked(data) {
 
     // Pulse travels the client → server edge: the neural "firing" moment
     state.links.forEach(link => {
-        if (!link.serviceIds?.has(serviceId)) return;
+        if (!link.serviceIds?.has(serviceId) || !link.lineMesh.visible) return;
         const src = state.vertices[link.sourceId];
         const tgt = state.vertices[link.targetId];
-        if (src && tgt) _spawnArteryParticle(src, tgt, COLORS[NODE_TYPES.SERVICE]);
+        if (src && tgt) _spawnArteryParticle(src, tgt, COLORS[NODE_TYPES.SERVICE], link.lateral);
     });
 
     // Record call to history so the inspector can show it
@@ -485,15 +493,17 @@ export function handleMessageEvent(data) {
     const now      = performance.now();
     const topicId  = `topic:${data.topic}`;
     const topicV   = state.vertices[topicId];
-    if (topicV && (now - (_particleThrottle[data.topic] ?? 0)) > 300
+    if (topicV && topicV.mesh.visible && (now - (_particleThrottle[data.topic] ?? 0)) > 300
             && state.activeParticles.length < 40) {
         _particleThrottle[data.topic] = now;
         state.links.forEach(link => {
             if (link.topicId !== topicId || !link.isArtery) return;
+            if (!link.lineMesh.visible) return; // don't fly along hidden edges
             const src = state.vertices[link.sourceId];
-            const tgt = state.vertices[link.targetId];
             // Publisher→topic direction only (avoids spawning on both legs)
-            if (src?.type === NODE_TYPES.NODE) _spawnArteryParticle(src, topicV);
+            if (src?.type === NODE_TYPES.NODE && src.mesh.visible) {
+                _spawnArteryParticle(src, topicV);
+            }
         });
     }
 
@@ -595,9 +605,10 @@ function checkTopicStaleness() {
     Object.entries(state.topicHz).forEach(([topicName, info]) => {
         if (info.health !== HZ_HEALTH.STALE && now - info.lastUpdate > 2000) {
             state.topicHz[topicName].health = HZ_HEALTH.STALE;
+            state.topicHz[topicName].hz = 0;
             const v = state.vertices[`topic:${topicName}`];
-            if (v) updateHzSprite(v, info.hz, HZ_HEALTH.STALE);
-            _updateTopicArteryLinks(topicName, info.hz, HZ_HEALTH.STALE);
+            if (v) updateHzSprite(v, null, HZ_HEALTH.STALE); // '--', not the dead rate
+            _updateTopicArteryLinks(topicName, 0, HZ_HEALTH.STALE);
         }
     });
 }
@@ -945,7 +956,7 @@ function _hzToOpacity(hz) {
 
 // Spawn a small bright dot that travels from-vertex → to-vertex over the artery.
 // Throttled per topic to avoid flooding at high Hz.
-function _spawnArteryParticle(fromVertex, toVertex, color = COLORS[NODE_TYPES.TOPIC]) {
+function _spawnArteryParticle(fromVertex, toVertex, color = COLORS[NODE_TYPES.TOPIC], lateral = null) {
     if (!fromVertex || !toVertex) return;
     const geom = new THREE.SphereGeometry(0.2, 8, 8);
     const mat  = new THREE.MeshBasicMaterial({
@@ -959,7 +970,7 @@ function _spawnArteryParticle(fromVertex, toVertex, color = COLORS[NODE_TYPES.TO
         startNode: fromVertex,
         midNode:   toVertex,
         endNode:   null,
-        lateral:   _lateralFor(fromVertex.id, toVertex.id), // follow the edge arc
+        lateral:   lateral ?? _lateralFor(fromVertex.id, toVertex.id), // follow the edge arc
         leg: 1, progress: 0, speed: 0.06, paused: false,
     });
 }
