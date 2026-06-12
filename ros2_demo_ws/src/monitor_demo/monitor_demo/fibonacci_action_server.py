@@ -11,6 +11,9 @@ from monitor_demo.node_utils import spin_node
 class FibonacciActionServer(Node):
     def __init__(self):
         super().__init__("fibonacci_action_server")
+        # Mirrors each goal/feedback/result exchange onto /_action/... introspection topics.
+        # Override at launch: --ros-args -p action_server_configure_introspection:=metadata
+        self.declare_parameter("action_server_configure_introspection", "contents")
         self.server = ActionServer(
             self,
             Fibonacci,

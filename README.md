@@ -197,11 +197,21 @@ ROS_MONITOR_FRONTEND_DIR=/path/to/any/static/dir ./scripts/run_visualizer.sh
 
 ---
 
-## Monitoring the mServe stack
+## Monitoring a custom workspace
 
-The bridge must be started from a shell that has both ROS 2 **and** the mServe
-workspace sourced — otherwise custom interface types (e.g. `interfaces/srv/Drive`)
-cannot be decoded and those subscriptions are skipped:
+The bridge must be started from a shell that has both ROS 2 **and** your project
+workspace sourced — otherwise custom interface types cannot be decoded and those
+subscriptions are skipped with a warning.
+
+Generic pattern:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /path/to/your_ws/install/setup.bash
+./scripts/run_visualizer.sh
+```
+
+**Example — mServe stack** (`interfaces/srv/Drive` and related types):
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -215,24 +225,32 @@ If the mServe workspace has not been built yet:
 cd /home/ecm/ai-workspace/projects/mServe-STACK/ws
 colcon build --packages-select interfaces utils mserve_drivechain mserve_base
 ```
-
 ---
 
-## Service call visibility (introspection)
+## Service & action call visibility (introspection)
 
-Topics can be observed by simply subscribing, but **service calls are point-to-point
-request/reply** — they cannot be sniffed passively. The visualizer relies on ROS 2
-**service introspection** (Iron+): when a server (or client) opts in, every
-request/response is mirrored onto a regular `<service>/_service_event` topic, which
-the bridge auto-detects and subscribes to.
+Topics can be observed by simply subscribing. **Service and action calls are
+different** — they are point-to-point exchanges invisible to passive subscribers.
+ROS 2 **introspection** (Iron+) mirrors these onto regular topics that the bridge
+auto-detects and subscribes to.
 
-**This is opt-in per service, in the node's code.** No introspection → service
-topology is still shown (servers/clients/types), but live calls are invisible.
-Enabling it on the **server side alone is enough** — the server emits a
-`REQUEST_RECEIVED` event no matter who calls (another node, rosbridge, or
-`ros2 service call`).
+Both services and actions share the same three configuration states:
 
-rclpy:
+| State | What is published |
+|---|---|
+| `disabled` | Nothing (default) |
+| `metadata` | Communication metadata only — timestamps, client/server IDs, sequence numbers — no payloads |
+| `contents` | Metadata **plus** full request/response or goal/result/cancel payloads |
+
+**This is opt-in per server, in the node's code.** No introspection → topology is
+still shown, but live calls are invisible. Enabling it on the **server side alone is
+enough** — the server emits events regardless of who calls it.
+
+### Services
+
+Each request/response is mirrored onto `<service>/_service_event`.
+
+**rclpy:**
 
 ```python
 from rclpy.qos import qos_profile_system_default
@@ -241,10 +259,10 @@ from rclpy.service_introspection import ServiceIntrospectionState
 srv = self.create_service(AddTwoInts, '/my/service', self.handle)
 srv.configure_introspection(
     self.get_clock(), qos_profile_system_default,
-    ServiceIntrospectionState.CONTENTS)  # METADATA = events without payloads
+    ServiceIntrospectionState.CONTENTS)  # or METADATA
 ```
 
-rclcpp:
+**rclcpp:**
 
 ```cpp
 #include <rcl/service_introspection.h>
@@ -254,13 +272,44 @@ service_->configure_introspection(
     get_clock(), rclcpp::SystemDefaultsQoS(), RCL_SERVICE_INTROSPECTION_CONTENTS);
 ```
 
-Already enabled in this ecosystem: the demo `math_service`/`math_client`, and all
-four `mserve_drivechain` services (`/connect`, `/stop`, `/drive`, `/set_motor_id`).
-
-Verify after starting the stack:
+Already enabled: the demo `math_service`/`math_client` nodes, and all four
+`mserve_drivechain` services (`/connect`, `/stop`, `/drive`, `/set_motor_id`).
 
 ```bash
 ros2 topic list | grep _service_event
+```
+
+### Actions
+
+Action calls are a bundle of topics and services (goal, feedback, result, status,
+cancel) under `/_action/`. The feedback topic is passively visible; the goal and
+result exchanges are not — introspection surfaces them via node parameters.
+
+**At node startup:**
+
+```bash
+ros2 run my_package my_action_server --ros-args -p action_server_configure_introspection:=contents
+```
+
+**At runtime:**
+
+```bash
+ros2 param set /my_action_client_node action_client_configure_introspection contents
+```
+
+**In node code (rclpy)** — declare with a default so introspection is on without
+launch arguments:
+
+```python
+self.declare_parameter("action_server_configure_introspection", "contents")  # server
+self.declare_parameter("action_client_configure_introspection", "contents")  # client
+```
+
+Already enabled: the demo `fibonacci_action_server`/`fibonacci_action_client` nodes
+(both default to `contents`).
+
+```bash
+ros2 topic list | grep _action
 ```
 
 ---
