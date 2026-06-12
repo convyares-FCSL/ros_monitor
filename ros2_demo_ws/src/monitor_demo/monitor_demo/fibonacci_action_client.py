@@ -9,6 +9,9 @@ from monitor_demo.node_utils import spin_node
 class FibonacciActionClient(Node):
     def __init__(self):
         super().__init__("fibonacci_action_client")
+        # Emits REQUEST_SENT events so the monitor shows goals leaving this node.
+        # Override at runtime: ros2 param set /fibonacci_action_client action_client_configure_introspection metadata
+        self.declare_parameter("action_client_configure_introspection", "contents")
         self.client = ActionClient(self, Fibonacci, "/monitor_demo/fibonacci")
         self.goal_in_flight = False
         self.goal_order = 6
