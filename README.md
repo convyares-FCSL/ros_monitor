@@ -149,9 +149,9 @@ directory by `./scripts/run_visualizer.sh`. Edit a file, refresh the browser.
 
 ### `frontend_new/` — React + TypeScript (generated with bolt.new)
 
-A React 18 + TypeScript + Vite + Tailwind rebuild implementing the same protocol
-(see `BOLT_PROMPT.md` for the full feature/behaviour specification it was built
-against). It must be **built** before the bridge can serve it.
+A React 18 + TypeScript + Vite + Tailwind rebuild implementing the same WebSocket
+protocol as the vanilla frontend. It must be **built** before the bridge can serve
+it.
 
 **Run it (build + serve, one command):**
 
@@ -225,6 +225,7 @@ If the mServe workspace has not been built yet:
 cd /home/ecm/ai-workspace/projects/mServe-STACK/ws
 colcon build --packages-select interfaces utils mserve_drivechain mserve_base
 ```
+
 ---
 
 ## Service & action call visibility (introspection)
