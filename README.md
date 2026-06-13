@@ -10,18 +10,49 @@ data to a React app over WebSockets; no ROS tooling is needed in the browser.
 
 ## Quickstart
 
-```bash
-# React app (build + serve the bridge) — open http://localhost:7260
-./scripts/run_visualizer_new.sh --sim --bt     # no ROS; both views on demo data
+Start the visualizer in full live-system mode:
 
-# Real ROS graph + auto-probe a local Groot2 behaviour tree on port 1667
-python3 backend/bridge.py
+```bash
+./scripts/run_visualizer_new.sh
 ```
 
-The bridge prints a **RUN MODE** banner on startup and the app shows `INSP` / `BT`
-data-mode chips, so it's always clear whether you're on real, demo, or no-ROS data.
-See **[docs/README.md → Run modes](docs/README.md#run-modes-bridge-flags)** for the
-full flag matrix (`--sim`, `--insp`, `--bt`, `--btros`).
+Then open:
+
+```text
+http://localhost:7260
+```
+
+The default mode is `full`, which connects to the live ROS 2 graph and auto-probes for a BT/Groot2 publisher.
+
+For pure local simulation:
+
+```bash
+./scripts/run_visualizer_new.sh --mode sim
+```
+
+For bundled local demos using real protocols:
+
+```bash
+./scripts/run_visualizer_new.sh --mode demo
+```
+
+Useful variants:
+
+```bash
+# Full mode with explicit BT endpoint
+./scripts/run_visualizer_new.sh --mode full --btros localhost:1667
+
+# Demo ROS only
+./scripts/run_visualizer_new.sh --mode demo --no-bt
+
+# Demo BT only
+./scripts/run_visualizer_new.sh --mode demo --no-ros-demo
+
+# Faster restart using existing built assets
+./scripts/run_visualizer_new.sh --skip-build
+```
+
+The bridge prints a **RUN MODE** banner on startup and the app shows `MODE` / `INSP` / `BT` chips so the active data sources are always visible. See **[docs/README.md → Visualizer run modes](docs/README.md#visualizer-run-modes)** for the full details.
 
 ## Layout
 

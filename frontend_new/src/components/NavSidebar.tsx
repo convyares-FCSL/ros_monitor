@@ -17,7 +17,7 @@ export function NavSidebar({ activePath, onNavigate }: NavSidebarProps) {
   return (
     <nav
       className="relative h-full flex flex-col shrink-0 backdrop-blur-xl border-r transition-[width] duration-200"
-      style={{ width: collapsed ? 64 : 224, background: theme.headerBg, borderColor: theme.panelBorder }}
+      style={{ width: collapsed ? 64 : 224, background: `var(--menu-bg, ${theme.panelBg})`, borderColor: theme.panelBorder }}
     >
       {/* Brand */}
       <div className="h-14 flex items-center gap-3 px-4 border-b shrink-0" style={{ borderColor: theme.panelBorder }}>

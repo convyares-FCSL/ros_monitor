@@ -984,6 +984,32 @@ export class SceneManager {
     this.controls.update();
   }
 
+  zoomToExtents() {
+    const points: THREE.Vector3[] = [];
+    for (const [, v] of this.vertices) {
+      if (!v.visible) continue;
+      points.push(v.mesh.position.clone());
+    }
+    for (const [, port] of this.dockedPorts) {
+      points.push(port.mesh.position.clone());
+    }
+    if (points.length === 0) {
+      this.resetCamera();
+      return;
+    }
+
+    const box = new THREE.Box3();
+    for (const point of points) box.expandByPoint(point);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z, 12);
+    const distance = radius * 1.55;
+    const offset = new THREE.Vector3(0.9, 0.55, 1).normalize().multiplyScalar(distance);
+    this.camera.position.copy(center.clone().add(offset));
+    this.controls.target.copy(center);
+    this.controls.update();
+  }
+
   focusEntity(id: string) {
     const pos = this.getPosition(id);
     if (!pos) return;

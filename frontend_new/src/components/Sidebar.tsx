@@ -105,7 +105,7 @@ export function Sidebar({
                 title="Services" entityType="service" colorHex={theme.serviceColorHex}
                 items={graph.services
                   .filter(s => !genericHidden || !isGenericService(s.name))
-                  .map(s => ({ id: `service:${s.name}`, label: s.name, sub: s.clients.length > 0 ? 'connected' : 'orphan' }))}
+                  .map(s => ({ id: `service:${s.name}`, label: s.name, sub: s.clients.length > 0 ? (s.servers.length > 0 ? 'connected' : 'orphan') : 'unused' }))}
                 genericItems={graph.services.filter(s => isGenericService(s.name)).map(s => ({ id: `service:${s.name}`, label: s.name }))}
                 visibleCount={graph.services.filter(s => !hiddenItems.has(`service:${s.name}`) && (!genericHidden || !isGenericService(s.name))).length}
                 totalCount={graph.services.length}

@@ -16,10 +16,11 @@ Two frontends share the same bridge (see **Frontends** below):
 ### 1. Hybrid serving model
 The Python backend serves static files (HTML, CSS, JS) from a `frontend/` directory using Python's built-in `http.server` running in a background thread, while simultaneously exposing a real-time, bi-directional WebSocket connection via `websockets` in the main `asyncio` event loop. This makes the tool self-contained and runnable with a single command.
 
-### 2. Dual-mode Execution (ROS 2 & Simulation)
-To ease development on Windows and deployment on a Linux Raspberry Pi, the backend bridge features an **automatic fallback simulation mode**:
-- If `rclpy` is found, it queries the actual active ROS 2 graph and subscribes dynamically to active topics.
-- If `rclpy` is missing, it starts a simulation loop generating simulated telemetry (sensor streams, motor commands, active action instances) so that the visualizer is immediately interactive on any machine.
+### 2. Canonical Run Modes
+The visualizer now uses a single top-level run mode contract:
+- `full` connects to the live ROS 2 graph and auto-probes for a live Groot2 publisher.
+- `demo` starts the bundled local demos and uses real local protocols.
+- `sim` stays fully offline and serves simulated ROS + BT data from the backend itself.
 
 ### 3. Threading Architecture
 To prevent ROS 2 callback execution from blocking the WebSocket event loop:
@@ -50,26 +51,12 @@ To prevent ROS 2 callback execution from blocking the WebSocket event loop:
 
 ## WSL / Ubuntu Quick Start
 
-Ubuntu 24.04 and recent WSL images block `pip install` into system Python by default (`externally-managed-environment`, PEP 668). This repo uses a local virtual environment that keeps ROS 2 system packages visible:
+Ubuntu 24.04 and recent WSL images block `pip install` into system Python by default (`externally-managed-environment`, PEP 668). This repo uses a local virtual environment that keeps ROS 2 system packages visible.
+
+Start the visualizer in bundled local demo mode:
 
 ```bash
-./scripts/setup_python_env.sh
-```
-
-To verify the visualizer end to end on ROS 2 Jazzy, use the bundled demo workspace:
-
-```bash
-./scripts/build_demo.sh
-```
-
-Terminal 1:
-```bash
-./scripts/run_visualizer.sh
-```
-
-Terminal 2:
-```bash
-./scripts/run_demo.sh
+./scripts/run_visualizer_new.sh --mode demo
 ```
 
 Then open:
@@ -78,60 +65,97 @@ Then open:
 http://localhost:7260
 ```
 
-The demo publishes topics, exposes a service, and runs a Fibonacci action so the visualizer has a real graph to render.
+The launcher builds the React frontend, ensures the local Python environment exists, starts the bundled ROS demo, starts the bundled BT demo, and runs the bridge against them.
 
----
+## Visualizer run modes
 
-## How-To-Run Guide
+The visualizer uses a single primary run-mode argument:
 
-### Option A: Local Simulation Mode (Windows / macOS / Linux without ROS 2)
-Use this option to test the interactive 3D frontend and verify the layout engine without any active ROS 2 system.
+```bash
+./scripts/run_visualizer_new.sh --mode sim
+./scripts/run_visualizer_new.sh --mode demo
+./scripts/run_visualizer_new.sh --mode full
+```
 
-1. Create the local Python environment:
-   ```bash
-   ./scripts/setup_python_env.sh
-   ```
-2. Navigate to the project root directory and run the bridge script:
-   ```bash
-   ./scripts/run_visualizer.sh --sim
-   ```
-   *Note: If `rclpy` is not installed, the bridge script will automatically fall back to simulation mode even without the `--sim` flag.*
-3. Open your browser and navigate to:
-   ```
-   http://localhost:7260
-   ```
-4. Click the **Toggle Simulation** button in the bottom-left controls overlay to start the local message streams.
+If no mode is supplied, `full` is used.
 
----
+### Mode summary
 
-### Option B: Real ROS 2 Mode (Linux Raspberry Pi / PC with ROS 2 Jazzy or Humble)
-Use this option inside a sourced ROS 2 workspace.
+| Mode | Description | External processes |
+|---|---|---|
+| `sim` | Pure local backend simulation. No ROS graph or external BT publisher is required. | None |
+| `demo` | Uses bundled local demo processes and real protocols. By default this includes the ROS demo and BT demo. | Demo ROS / BT processes |
+| `full` | Connects to the real ROS 2 graph and real BT executor. | Real system processes |
 
-1. Create the local Python environment:
-   ```bash
-   ./scripts/setup_python_env.sh
-   ```
-2. Source your ROS 2 workspace:
-   ```bash
-   source /opt/ros/jazzy/setup.bash
-   source /path/to/your_ws/install/setup.bash  # optional, needed for custom interfaces
-   ```
-3. Run the bridge:
-   ```bash
-   ./scripts/run_visualizer.sh
-   ```
-4. Run some active ROS 2 nodes in a separate terminal. For a quick check, use the bundled demo:
-   ```bash
-   ./scripts/build_demo.sh
-   ./scripts/run_demo.sh
-   ```
-5. Open a browser (on the same machine or on a computer on the same network) and go to:
-   ```
-   http://<RASPBERRY_PI_IP>:7260
-   ```
-   *(Ensure port `7260` and `8765` are open on the Raspberry Pi's firewall).*
+### Commands
 
-If the bridge logs warnings such as `Could not dynamically subscribe ... No module named ...`, the graph is still visible, but payload decoding for those topic types is unavailable until the workspace that defines those interfaces is sourced before starting the bridge.
+```bash
+# Full system, default
+./scripts/run_visualizer_new.sh
+./scripts/run_visualizer_new.sh --mode full
+
+# Full system with explicit BT endpoint
+./scripts/run_visualizer_new.sh --mode full --btros localhost:1667
+
+# Pure local simulation
+./scripts/run_visualizer_new.sh --mode sim
+
+# Full bundled demo: ROS demo + BT demo
+./scripts/run_visualizer_new.sh --mode demo
+
+# ROS demo only
+./scripts/run_visualizer_new.sh --mode demo --no-bt
+
+# BT demo only
+./scripts/run_visualizer_new.sh --mode demo --no-ros-demo
+```
+
+### Optional switches
+
+| Option | Meaning |
+|---|---|
+| `--btros host:port` | Connect to a specific BT/Groot2 publisher endpoint. In `full` mode this overrides the default localhost auto-probe. |
+| `--no-bt` | Disable behavior tree integration. Useful for ROS-only demo or ROS-only full mode. |
+| `--no-ros-demo` | In `demo` mode, do not start the bundled ROS demo. Useful for BT-only demo runs. |
+| `--skip-build` | Reuse existing frontend build output for faster restarts. |
+
+### Behavior by mode
+
+#### `--mode sim`
+
+- Pure local backend simulation
+- No ROS 2 runtime required
+- No external ROS demo nodes
+- No external BT/Groot2 publisher
+- Simulated inspection data from the backend
+- Simulated BT data from the backend unless `--no-bt` is passed
+
+#### `--mode demo`
+
+- Bundled local demo mode using real local protocols
+- Starts `run_demo.sh` by default
+- Starts the bundled `bt_demo` publisher by default
+- `--no-bt` keeps only the ROS demo side
+- `--no-ros-demo` keeps only the BT demo side
+
+#### `--mode full`
+
+- Live system mode
+- Introspects the real ROS 2 graph
+- Auto-probes `localhost:1667` for a BT/Groot2 publisher unless `--no-bt` is passed
+- Supports an explicit BT endpoint with `--btros host:port`
+
+### Backwards compatibility
+
+Legacy flags are still accepted temporarily:
+
+| Legacy flag | New equivalent |
+|---|---|
+| `--sim` | `--mode sim` |
+| `--bt` | Deprecated and ambiguous. Prefer `--mode sim` for internal simulated BT or `--mode demo` for the bundled local BT demo. |
+| no flags | `--mode full` |
+
+The launcher and bridge print deprecation warnings when the legacy flags are used.
 
 ---
 
@@ -156,41 +180,15 @@ it.
 **Run it (build + serve, one command):**
 
 ```bash
-./scripts/run_visualizer_new.sh              # npm install (first run) + vite build + bridge
-./scripts/run_visualizer_new.sh --skip-build # fast restart, reuse the existing dist/
-./scripts/run_visualizer_new.sh --sim        # extra args are forwarded to the bridge
+./scripts/run_visualizer_new.sh              # default: --mode full
+./scripts/run_visualizer_new.sh --mode sim
+./scripts/run_visualizer_new.sh --mode demo
+./scripts/run_visualizer_new.sh --skip-build
 ```
 
 Then open `http://localhost:7260` as usual.
 
-### Run modes (bridge flags)
-
-The bridge makes it explicit what data each view is showing. The TopBar in the app
-shows the same as `INSP` (3D introspection) and `BT` (behavior tree) chips, and the
-bridge prints a RUN MODE banner on startup.
-
-| Flag | Meaning |
-|---|---|
-| _(none)_ | **REAL** — live ROS 2 graph; **auto-probes `localhost:1667`** for a Groot2 BT executor |
-| `--sim` | **NO ROS** — never use rclpy; the introspection view runs on demo data |
-| `--insp` | Introspection **DEMO** — simulated ROS graph even when ROS is present |
-| `--bt` | Behavior Tree **DEMO** — run the demo trees (HydrogenDispenser + PackCharger) |
-| `--btros HOST:PORT` | Behavior Tree **REAL** — explicit Groot2 v4 endpoint (overrides the 1667 auto-probe; needs `pyzmq`) |
-
-By default the bridge auto-probes the standard Groot2 port (`1667`), so a locally
-running executor (e.g. [bt_demo/](../bt_demo/)) is picked up with **no flags**; use
-`--btros` only for a non-default host/port. The three sources are orthogonal, e.g.:
-
-```bash
-./scripts/run_visualizer_new.sh --sim --bt     # no ROS; both views on controlled demos
-./scripts/run_visualizer_new.sh --bt           # real ROS graph + demo behavior tree
-python3 backend/bridge.py                       # real ROS graph + auto-probe BT on 1667
-python3 backend/bridge.py --btros host:1667     # explicit Groot2 endpoint (see bt_demo/)
-```
-
-There is also an in-app **Sim** toggle on the Behavior Tree page (bottom-left
-controls) that runs a fake tree entirely in the browser — handy for UI work and
-settings tuning with no bridge at all, mirroring the ROS Introspection sim toggle.
+The app TopBar shows `MODE`, `INSP`, and `BT` chips to match the bridge's startup RUN MODE banner. The React app uses a single shared WebSocket connection, and runtime behavior is selected through the launcher run modes rather than page-local browser simulation toggles.
 
 **Develop it (hot reload):**
 

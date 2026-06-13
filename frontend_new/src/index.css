@@ -58,7 +58,7 @@ details summary::-webkit-details-marker { display: none; }
 
 .bt-core {
   border: 2px solid #475569;
-  background: rgba(15, 23, 42, 0.92);
+  background: var(--menu-bg-solid, rgba(15, 23, 42, 0.95));
   transition: border-color 0.15s, background-color 0.15s;
 }
 .bt-core-subtree { border-style: dashed; }

@@ -5,8 +5,7 @@ import type { DeadEndMode } from '../types';
 interface ControlsOverlayProps {
   open: boolean;
   onResetCamera: () => void;
-  simMode: boolean;
-  onToggleSim: () => void;
+  onZoomExtents: () => void;
   paused: boolean;
   onTogglePause: () => void;
   deadEndMode: DeadEndMode;
@@ -21,7 +20,7 @@ const DEAD_END_LABELS: Record<DeadEndMode, string> = {
 };
 
 export function ControlsOverlay({
-  open, onResetCamera, simMode, onToggleSim, paused, onTogglePause, deadEndMode, deadEndCount, onCycleDeadEnd,
+  open, onResetCamera, onZoomExtents, paused, onTogglePause, deadEndMode, deadEndCount, onCycleDeadEnd,
 }: ControlsOverlayProps) {
   const { theme } = useTheme();
 
@@ -41,9 +40,9 @@ export function ControlsOverlay({
 
       <div className="grid grid-cols-2 gap-1.5">
         <Btn onClick={onResetCamera} icon={<RotateCcw className="w-3 h-3" />} label="Recenter" panelBg={theme.panelBg} panelBorder={theme.panelBorder} />
-        <Btn onClick={onToggleSim} icon={simMode ? <Play className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-          label={simMode ? 'Live Mode' : 'Sim Mode'}
-          active={simMode} activeColor="cyan" panelBg={theme.panelBg} panelBorder={theme.panelBorder} />
+        <Btn onClick={onZoomExtents} icon={<ZoomIn className="w-3 h-3" />}
+          label="Zoom Extents"
+          panelBg={theme.panelBg} panelBorder={theme.panelBorder} />
         <Btn onClick={onTogglePause} icon={paused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
           label={paused ? 'Resume' : 'Pause View'}
           active={paused} activeColor="amber" panelBg={theme.panelBg} panelBorder={theme.panelBorder} />
@@ -84,8 +83,8 @@ function Btn({ onClick, icon, label, active, activeColor, panelBg, panelBorder }
 
   return (
     <button onClick={onClick}
-      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[10px] font-semibold transition-all backdrop-blur-xl text-white/60 hover:text-white hover:bg-white/[0.05]"
-      style={{ background: panelBg, border: `1px solid ${panelBorder}` }}>
+      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[10px] font-semibold transition-all backdrop-blur-xl text-white/70 hover:text-white hover:bg-slate-300/[0.14]"
+      style={{ background: 'rgba(148, 163, 184, 0.12)', border: '1px solid rgba(255,255,255,0.12)' }}>
       {icon}{label}
     </button>
   );

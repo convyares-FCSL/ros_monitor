@@ -1,4 +1,4 @@
-import { Cpu, Radio, Server, Wrench, Wifi, WifiOff, Play, Gauge } from 'lucide-react';
+import { Cpu, Radio, Server, Wrench, Wifi, WifiOff, Gauge } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import type { ConnectionStatus, GraphUpdate } from '../types';
 
@@ -15,8 +15,8 @@ function formatBandwidth(bytesPerSec: number): string {
 }
 
 const STATUS_CONFIG = {
+  connecting: { label: 'CONNECTING', dot: 'bg-amber-400 shadow-[0_0_8px_#fbbf24]', text: 'text-amber-300', icon: Wifi },
   connected: { label: 'CONNECTED', dot: 'bg-green-400 shadow-[0_0_8px_#4ade80]', text: 'text-green-400', icon: Wifi },
-  simulating: { label: 'SIMULATING', dot: 'bg-sky-400 shadow-[0_0_8px_#38bdf8]', text: 'text-sky-400', icon: Play },
   disconnected: { label: 'DISCONNECTED', dot: 'bg-red-500', text: 'text-red-400', icon: WifiOff },
 };
 

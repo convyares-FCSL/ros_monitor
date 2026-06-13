@@ -4,8 +4,14 @@ import { computeLayout, type BTLayout } from './layout';
 import { BTNode } from './BTNode';
 
 export interface BTCanvasHandle {
-  recenter: () => void;
+  resetView: () => void;
+  zoomExtents: () => void;
   focusNode: (id: number) => void;
+}
+
+interface BTCanvasProps {
+  onNodeContextMenu?: (nodeId: number, x: number, y: number) => void;
+  onCanvasContextMenu?: (x: number, y: number) => void;
 }
 
 // A single parent→child connector. Subscribes to the child's status so only the
@@ -17,7 +23,7 @@ function BTWire({ childId, d }: { childId: number; d: string }) {
 
 interface View { x: number; y: number; scale: number }
 
-export const BTCanvas = forwardRef<BTCanvasHandle>(function BTCanvas(_props, ref) {
+export const BTCanvas = forwardRef<BTCanvasHandle, BTCanvasProps>(function BTCanvas(props, ref) {
   const blueprint = useActiveBlueprint();
   const activeTreeId = useBtStore((s) => s.activeTreeId);
   const collapsed = useBtStore((s) => s.collapsed);
@@ -34,21 +40,33 @@ export const BTCanvas = forwardRef<BTCanvasHandle>(function BTCanvas(_props, ref
   viewRef.current = view;
   const dragRef = useRef<{ lastX: number; lastY: number; moved: boolean; id: number } | null>(null);
   const movedRef = useRef(false);
+  const homeView: View = { x: 120, y: 80, scale: 1 };
 
   const fit = (lo: BTLayout) => {
-    const w = stageRef.current?.clientWidth ?? window.innerWidth;
-    setView({ x: Math.max(40, (w - lo.width) / 2), y: 80, scale: 1 });
+    const stage = stageRef.current;
+    const w = stage?.clientWidth ?? window.innerWidth;
+    const h = stage?.clientHeight ?? window.innerHeight;
+    const padX = 360;
+    const padTop = 120;
+    const padBottom = 72;
+    const usableW = Math.max(240, w - padX);
+    const usableH = Math.max(240, h - padTop - padBottom);
+    const scale = Math.min(1, usableW / Math.max(lo.width, 1), usableH / Math.max(lo.height, 1));
+    const centeredX = (w - lo.width * scale) / 2;
+    const centeredY = padTop + (usableH - lo.height * scale) / 2;
+    setView({ x: Math.max(24, centeredX), y: Math.max(72, centeredY), scale });
   };
 
   // Imperative controls for the controls overlay + tree explorer.
   useImperativeHandle(ref, () => ({
-    recenter: () => { if (layout) fit(layout); },
+    resetView: () => { setView(homeView); },
+    zoomExtents: () => { if (layout) fit(layout); },
     focusNode: (id: number) => {
       select(id);
       const box = layout?.boxes.get(id);
       const stage = stageRef.current;
       if (!box || !stage) return;
-      const scale = Math.max(viewRef.current.scale, 0.8);
+      const scale = Math.max(viewRef.current.scale, 0.68);
       setView({
         x: stage.clientWidth / 2 - (box.x + box.w / 2) * scale,
         y: stage.clientHeight / 2 - (box.y + box.h / 2) * scale,
@@ -117,6 +135,10 @@ export const BTCanvas = forwardRef<BTCanvasHandle>(function BTCanvas(_props, ref
     if (movedRef.current) { movedRef.current = false; return; }
     select(null);
   };
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    props.onCanvasContextMenu?.(e.clientX, e.clientY);
+  };
 
   return (
     <div
@@ -127,6 +149,7 @@ export const BTCanvas = forwardRef<BTCanvasHandle>(function BTCanvas(_props, ref
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onClick={onClick}
+      onContextMenu={onContextMenu}
     >
       {layout ? (
         <div className="absolute top-0 left-0 origin-top-left"
@@ -135,13 +158,15 @@ export const BTCanvas = forwardRef<BTCanvasHandle>(function BTCanvas(_props, ref
             style={{ pointerEvents: 'none' }}>
             {layout.wires.map((w) => <BTWire key={w.childId} childId={w.childId} d={w.d} />)}
           </svg>
-          {[...layout.boxes.values()].map((box) => <BTNode key={box.id} box={box} />)}
+          {[...layout.boxes.values()].map((box) => <BTNode key={box.id} box={box} onContextMenu={props.onNodeContextMenu} />)}
         </div>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <div className="text-sm font-semibold text-white/70">Waiting for a behavior tree…</div>
-            <div className="mt-1.5 text-[11px] font-mono text-white/35">run the bridge with <span className="text-cyan-400">--bt</span></div>
+            <div className="mt-1.5 text-[11px] font-mono text-white/35">
+              start the bridge in <span className="text-cyan-400">--mode demo</span> or <span className="text-cyan-400">--mode full</span>
+            </div>
           </div>
         </div>
       )}
