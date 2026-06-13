@@ -23,6 +23,7 @@ from ros_monitor_bridge.server import (
     websocket_broadcaster,
 )
 from ros_monitor_bridge.bt_simulation import BTSimulation
+from ros_monitor_bridge.btros_bridge import DEFAULT_GROOT_PORT, BTRosBridge
 from ros_monitor_bridge.simulation import SimulatedBridge
 from ros_monitor_bridge.utils import RateLimiter
 
@@ -41,6 +42,7 @@ def main():
         rate_limit_hz=args.rate_limit,
         sim_mode=args.sim or not ROS_AVAILABLE,
         bt_mode=args.bt,
+        btros=args.btros,
     )
 
     if ROS_AVAILABLE:
@@ -90,12 +92,20 @@ async def async_main(config, runtime, rate_limiter, logger):
             ros_thread = threading.Thread(target=run_ros2_node, args=(runtime, rate_limiter, stop_event, logger))
             ros_thread.start()
 
-        # The BT emitter is an independent data source: it can run alongside
-        # either the ROS bridge or the simulation.
+        # The BT data sources are independent: they run alongside either the ROS
+        # bridge or the simulation. --bt = Python demo emitter; --btros = real
+        # Groot2 v4 client against a live executor.
         bt_sim = None
         if config.bt_mode:
             bt_sim = BTSimulation(runtime, logger)
             bt_sim.start()
+
+        bt_ros = None
+        if config.btros:
+            host, _, port = config.btros.partition(":")
+            bt_ros = BTRosBridge(runtime, logger, host=host or "localhost",
+                                 port=int(port) if port else DEFAULT_GROOT_PORT)
+            bt_ros.start()
 
         try:
             await asyncio.Future()
@@ -110,6 +120,8 @@ async def async_main(config, runtime, rate_limiter, logger):
                     ros_thread.join(timeout=3.0)
             if bt_sim is not None:
                 bt_sim.stop()
+            if bt_ros is not None:
+                bt_ros.stop()
             broadcaster_task.cancel()
 
 
@@ -122,6 +134,13 @@ def parse_args():
         "--bt",
         action="store_true",
         help="Start the Behavior Tree demo emitter (bt_blueprint / bt_delta events)",
+    )
+    parser.add_argument(
+        "--btros",
+        type=str,
+        default=None,
+        metavar="HOST[:PORT]",
+        help="Connect to a live Groot2 v4 executor (BehaviorTree.CPP) and forward its tree",
     )
     parser.add_argument(
         "--rate-limit",

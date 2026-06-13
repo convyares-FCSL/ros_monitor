@@ -19,6 +19,7 @@ clients. The blueprint is re-emitted periodically (like `graph_update`) so a
 browser that connects mid-stream still receives the structure.
 """
 
+import math
 import threading
 import time
 
@@ -29,6 +30,7 @@ FAILURE = "FAILURE"
 
 TICK_PERIOD_S = 0.4          # one engine tick
 BLUEPRINT_REEMIT_S = 3.0     # re-broadcast structure for late-joining clients
+BLACKBOARD_EMIT_S = 1.0      # blackboard snapshot cadence
 BLUEPRINT_VERSION = 1        # bump if the static structure below changes
 
 
@@ -384,13 +386,43 @@ class BTSimulation:
             "data": {"id": node_id, "state": status},
         })
 
+    def _emit_blackboard(self, now, start):
+        # Live-looking values for the keys the demo tree's ports remap.
+        t = now - start
+        return {
+            "type": "bt_blackboard",
+            "timestamp": now,
+            "data": {
+                "scope": _TREE_ID,
+                "vars": {
+                    "estop_state": "CLEAR",
+                    "safe_state_ack": False,
+                    "bay_id": "BAY-03",
+                    "vehicle_id": "HGV-4471",
+                    "session_token": f"SES-{int(t // 12) % 1000:03d}",
+                    "precool_target": -40.0,
+                    "nozzle_temp": round(-40 + 8 * math.sin(t * 0.3), 1),
+                    "pressure_limit": 700,
+                    "fill_target": 6.2,
+                    "dispensed": round((t % 12) / 12 * 6.2, 2),
+                    "metrics_topic": "/dispenser/metrics",
+                    "record_id": 1000 + int(t // 12),
+                },
+            },
+        }
+
     def _loop(self):
         engine = BTEngine(self._emit_delta)
+        start = time.time()
         last_blueprint = 0.0
+        last_blackboard = 0.0
         while self._running:
             now = time.time()
             if now - last_blueprint >= BLUEPRINT_REEMIT_S:
                 self.runtime.dispatch_event(blueprint_event(now))
                 last_blueprint = now
+            if now - last_blackboard >= BLACKBOARD_EMIT_S:
+                self.runtime.dispatch_event(self._emit_blackboard(now, start))
+                last_blackboard = now
             engine.tick_root()
             time.sleep(TICK_PERIOD_S)

@@ -270,16 +270,29 @@ always mounted, so that path rarely runs. Under the router:
       route: cross-instance outline-material cache disposal, and the sim emitting
       services without a `clients[]` array ([simulation.py](backend/ros_monitor_bridge/simulation.py)).
 
-### Phase 3 — BT integration in React (`frontend_new/`)
-- [ ] Add `zustand`; implement `store/btStore.ts` + `hooks/useBtSocket.ts`.
-- [ ] `bt/layout.ts` (port proven Phase 1 math), `BTCanvas` / `BTNode` / `BTWires`
-      as Tailwind components matching the dark theme.
-- [ ] Per-node selector subscriptions so deltas patch one node, not the tree.
-- [ ] `BTInspector`: on node click show port remappings + live blackboard table
-      (highlight on change). Optional per-node tick-jitter sparkline reusing the
-      pattern from [FrequencySparkline.tsx](frontend_new/src/components/FrequencySparkline.tsx).
-- [ ] **[Option B, optional]** Add BT.CPP demo node + `btros_bridge.py` (pyzmq) emitting
-      the identical contract; flip the source with no UI change.
+### Phase 3 — BT integration in React ✅ DONE (awaiting visual gate)
+- [x] Added `zustand`; [store/btStore.ts](frontend_new/src/store/btStore.ts) +
+      [hooks/useBtSocket.ts](frontend_new/src/hooks/useBtSocket.ts).
+- [x] [bt/layout.ts](frontend_new/src/bt/layout.ts) (ported tidy-tree + orthogonal
+      math), [BTCanvas](frontend_new/src/bt/BTCanvas.tsx) (pan/zoom + SVG wires) /
+      [BTNode](frontend_new/src/bt/BTNode.tsx) (caps + services + core) — HTML divs
+      Tailwind-themed over an SVG wire layer; CSS states in index.css.
+- [x] Per-node selector subscriptions (`useBtStore(s => s.statusById[id])`) so a
+      delta repaints only the affected node + its incoming wire.
+- [x] [BTInspector](frontend_new/src/bt/BTInspector.tsx): port remappings + live
+      blackboard table with change-flash; collapse/expand subtrees. (Sparkline not
+      chosen.) Emitter now sends `bt_blackboard`.
+- [x] **[Option B]** [btros_bridge.py](backend/ros_monitor_bridge/btros_bridge.py):
+      Groot2 **v4** ZMQ_REQ client — FULLTREE→blueprint (XML `_uid` mapping, decorator
+      folding, subtree inlining, TreeNodesModel port directions), STATUS poll→deltas.
+      `--btros HOST[:PORT]` flag. Parser + protocol framing tested offline
+      ([test_btros_parse.py](backend/test_btros_parse.py)). **Needs a live
+      mserve/hyfleet executor to validate the ZMQ runtime path + LE assumption.**
+
+### Phase 3 — Gate
+- [ ] Visually verify the Behavior Tree page (sim): tree renders, RUNNING path flows,
+      states animate, click-to-inspect shows ports + live blackboard, collapse works.
+- [ ] Validate Option B against a running Groot2 v4 executor: `--btros HOST:PORT`.
 
 ---
 

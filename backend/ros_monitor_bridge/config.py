@@ -24,4 +24,5 @@ class BridgeConfig:
     rate_limit_hz: float = DEFAULT_RATE_LIMIT_HZ
     sim_mode: bool = False
     bt_mode: bool = False
+    btros: str | None = None  # "HOST[:PORT]" of a live Groot2 v4 executor
 
