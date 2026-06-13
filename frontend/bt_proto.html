@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BT Prototype — Behavior Tree Visualizer (Phase 1)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    /* Reuse the "System Anatomy" dark palette from the main app (style.css). */
+    :root {
+      --bg-dark: #030712;
+      --bg-panel: rgba(15, 23, 42, 0.75);
+      --cap-bg: #1f2937;
+      --cap-border: rgba(255, 255, 255, 0.10);
+      --svc-bg: rgba(30, 41, 59, 0.9);
+      --text-primary: #f3f4f6;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+      --idle: #475569;
+      --cyan: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.55);
+      --green: #10b981;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --font-sans: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg-dark); color: var(--text-primary);
+      font-family: var(--font-sans);
+    }
+    #stage { position: absolute; inset: 0; cursor: grab; }
+    #stage.panning { cursor: grabbing; }
+    svg { width: 100%; height: 100%; display: block; }
+
+    /* --- Header HUD --- */
+    header {
+      position: absolute; top: 16px; left: 16px; z-index: 10;
+      padding: 12px 16px; border-radius: 12px;
+      background: var(--bg-panel); border: 1px solid var(--cap-border);
+      backdrop-filter: blur(12px);
+    }
+    header h1 { font-size: 15px; font-weight: 800; letter-spacing: 0.5px; }
+    header h1 span { color: var(--cyan); }
+    header .sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    header .conn { font-family: var(--font-mono); font-size: 11px; margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+    .dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .dot.error { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+    .legend {
+      position: absolute; bottom: 16px; left: 16px; z-index: 10;
+      padding: 10px 14px; border-radius: 10px; background: var(--bg-panel);
+      border: 1px solid var(--cap-border); backdrop-filter: blur(12px);
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+      display: flex; gap: 16px;
+    }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+    .hint {
+      position: absolute; bottom: 16px; right: 16px; z-index: 10;
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+    }
+
+    /* --- SVG node styling (classes toggled directly on bt_delta) --- */
+    .wire { fill: none; stroke: var(--idle); stroke-width: 2; opacity: 0.28; transition: opacity .2s; }
+    .wire.running {
+      stroke: var(--cyan); opacity: 1; stroke-width: 2.5;
+      stroke-dasharray: 7 7; animation: flow 0.6s linear infinite;
+      filter: drop-shadow(0 0 4px var(--cyan-glow));
+    }
+    @keyframes flow { to { stroke-dashoffset: -28; } }
+
+    .cap { fill: var(--cap-bg); stroke: var(--cap-border); stroke-width: 1; }
+    .cap-label { fill: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }
+    .svc { fill: var(--svc-bg); stroke: var(--cap-border); stroke-width: 1; }
+    .svc-label { fill: var(--text-muted); font-family: var(--font-mono); font-size: 9.5px; }
+
+    .core { fill: var(--bg-panel); stroke: var(--idle); stroke-width: 2; transition: stroke .15s, fill .15s; }
+    .core.running { stroke: var(--cyan); animation: pulse 1.1s ease-in-out infinite; }
+    .core.success { stroke: var(--green); fill: rgba(16,185,129,0.16); }
+    .core.failure { stroke: var(--red); fill: rgba(239,68,68,0.16); }
+    @keyframes pulse {
+      0%,100% { stroke: var(--cyan); filter: drop-shadow(0 0 2px var(--cyan-glow)); }
+      50% { stroke: #67e8f9; filter: drop-shadow(0 0 9px var(--cyan-glow)); }
+    }
+    .core.subtree { stroke-dasharray: 5 4; }
+    .node-symbol { fill: var(--text-primary); font-family: var(--font-mono); font-weight: 700; font-size: 15px; }
+    .node-name { fill: var(--text-primary); font-family: var(--font-sans); font-weight: 600; font-size: 12px; }
+    .node-type { fill: var(--text-muted); font-family: var(--font-mono); font-size: 9px; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+      <g id="viewport">
+        <g id="wires"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+  </div>
+
+  <header>
+    <h1>BT<span>.Proto</span></h1>
+    <div class="sub">Phase 1 — Behavior Tree layout + live pipeline sandbox</div>
+    <div class="conn"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></div>
+  </header>
+
+  <div class="legend">
+    <span><i style="background:var(--idle)"></i>IDLE</span>
+    <span><i style="background:var(--cyan)"></i>RUNNING</span>
+    <span><i style="background:var(--green)"></i>SUCCESS</span>
+    <span><i style="background:var(--red)"></i>FAILURE</span>
+  </div>
+  <div class="hint">scroll = zoom · drag = pan · run bridge with <b>--bt</b></div>
+
+  <script src="js/bt_proto.js"></script>
+</body>
+</html>
