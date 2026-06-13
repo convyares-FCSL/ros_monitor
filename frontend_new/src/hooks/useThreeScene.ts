@@ -92,6 +92,7 @@ export function useThreeScene(opts: UseThreeSceneOptions) {
   }, [opts.emissiveIntensity]);
 
   const resetCamera = useCallback(() => managerRef.current?.resetCamera(), []);
+  const zoomExtents = useCallback(() => managerRef.current?.zoomToExtents(), []);
   const focusEntity = useCallback((id: string) => {
     managerRef.current?.setSelectedEntity(id);
     managerRef.current?.focusEntity(id);
@@ -127,7 +128,7 @@ export function useThreeScene(opts: UseThreeSceneOptions) {
   }, []);
 
   return {
-    resetCamera, focusEntity, releaseParticles, setSelectedEntity,
+    resetCamera, zoomExtents, focusEntity, releaseParticles, setSelectedEntity,
     spawnMessageParticle, spawnServicePulse, triggerServiceActivity,
     updateLifecycle, clearScene, getDeadEndCount, applySceneSettings,
   };

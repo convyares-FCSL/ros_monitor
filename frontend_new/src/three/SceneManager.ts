@@ -984,6 +984,32 @@ export class SceneManager {
     this.controls.update();
   }
 
+  zoomToExtents() {
+    const points: THREE.Vector3[] = [];
+    for (const [, v] of this.vertices) {
+      if (!v.visible) continue;
+      points.push(v.mesh.position.clone());
+    }
+    for (const [, port] of this.dockedPorts) {
+      points.push(port.mesh.position.clone());
+    }
+    if (points.length === 0) {
+      this.resetCamera();
+      return;
+    }
+
+    const box = new THREE.Box3();
+    for (const point of points) box.expandByPoint(point);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z, 12);
+    const distance = radius * 1.55;
+    const offset = new THREE.Vector3(0.9, 0.55, 1).normalize().multiplyScalar(distance);
+    this.camera.position.copy(center.clone().add(offset));
+    this.controls.target.copy(center);
+    this.controls.update();
+  }
+
   focusEntity(id: string) {
     const pos = this.getPosition(id);
     if (!pos) return;
@@ -1362,7 +1388,47 @@ export class SceneManager {
     (this as unknown as { _ro?: ResizeObserver })._ro?.disconnect();
     this.edgeRenderer.dispose();
     this.particles.dispose();
+
+    // Free GPU-resident geometries, materials and textures. renderer.dispose()
+    // does NOT release these — without this, every navigation away from the
+    // ROS view leaks node/edge geometries and (crucially) the canvas-backed
+    // label / Hz-badge sprite textures.
+    this.disposeSceneObjects();
+    this.controls.dispose();
+    this.composer.dispose();
+
     this.renderer.dispose();
-    this.container.removeChild(this.renderer.domElement);
+    this.renderer.forceContextLoss();
+    if (this.renderer.domElement.parentNode === this.container) {
+      this.container.removeChild(this.renderer.domElement);
+    }
+  }
+
+  private disposeSceneObjects() {
+    // Dedupe: outline shells reuse their source mesh's geometry, so the same
+    // geometry/material can appear many times in one traversal.
+    const seen = new Set<THREE.BufferGeometry | THREE.Material>();
+    this.scene.traverse((obj) => {
+      const geometry = (obj as Partial<THREE.Mesh>).geometry as THREE.BufferGeometry | undefined;
+      if (geometry && !seen.has(geometry)) {
+        seen.add(geometry);
+        geometry.dispose();
+      }
+      const material = (obj as Partial<THREE.Mesh>).material;
+      if (!material) return;
+      const materials = Array.isArray(material) ? material : [material];
+      for (const mat of materials) {
+        if (seen.has(mat)) continue;
+        seen.add(mat);
+        for (const value of Object.values(mat as unknown as Record<string, unknown>)) {
+          if (value && (value as THREE.Texture).isTexture) (value as THREE.Texture).dispose();
+        }
+        mat.dispose();
+      }
+    });
+    // outlineMaterialCache is module-level and shared across SceneManager
+    // instances. Its materials were just disposed above, so clear the map —
+    // otherwise the next instance reuses disposed GPU resources and crashes.
+    outlineMaterialCache.clear();
   }
 }
