@@ -18,8 +18,6 @@ import type {
 import { DEFAULT_SCENE_SETTINGS } from '../types';
 import { isGenericNode, isGenericTopic, isGenericService, setGenericOverrides } from '../three/SceneManager';
 
-// Derive the bridge host from wherever the page is served (works on Pi/remote)
-const WS_URL = `ws://${window.location.hostname || 'localhost'}:8765`;
 const MAX_MESSAGES = 200;
 const MAX_SERVICE_CALLS = 100;
 const STALE_THRESHOLD_MS = 2000;
@@ -41,9 +39,7 @@ export function RosIntrospection() {
   const { theme } = themeCtx;
 
   // Connection
-  const [status, setStatus] = useState<ConnectionStatus>('disconnected');
-  // Connect to the real bridge by default; sim is an explicit opt-in toggle
-  const [simMode, setSimMode] = useState(false);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [paused, setPaused] = useState(false);
 
   // Graph data
@@ -82,7 +78,12 @@ export function RosIntrospection() {
   const [sceneSettings, setSceneSettings] = useState<SceneSettings>(() => {
     try {
       const saved = localStorage.getItem('ros3d-scene-settings');
-      if (saved) return { ...DEFAULT_SCENE_SETTINGS, ...JSON.parse(saved) };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migrate old default sceneBg (#2e2f33) to new unified default (#0f172a).
+        if (parsed.sceneBg === '#2e2f33') delete parsed.sceneBg;
+        return { ...DEFAULT_SCENE_SETTINGS, ...parsed };
+      }
     } catch { /* ignore */ }
     return DEFAULT_SCENE_SETTINGS;
   });
@@ -179,7 +180,7 @@ export function RosIntrospection() {
   }, []);
 
   useRosGraph({
-    wsUrl: WS_URL, simMode, paused,
+    paused,
     onGraphUpdate: handleGraphUpdate,
     onMessage: handleMessage,
     onFrequency: handleFrequency,
@@ -212,7 +213,7 @@ export function RosIntrospection() {
   }), [theme.nodeColor, theme.topicColor, theme.serviceColor, theme.actionColor]);
 
   const {
-    resetCamera, focusEntity, releaseParticles, setSelectedEntity: setSceneSelectedEntity,
+    resetCamera, zoomExtents, focusEntity, releaseParticles, setSelectedEntity: setSceneSelectedEntity,
     spawnMessageParticle, spawnServicePulse, triggerServiceActivity,
     updateLifecycle, clearScene, getDeadEndCount, applySceneSettings,
   } = useThreeScene({
@@ -458,8 +459,7 @@ export function RosIntrospection() {
       <ControlsOverlay
         open={sidebarOpen}
         onResetCamera={resetCamera}
-        simMode={simMode}
-        onToggleSim={() => setSimMode(m => !m)}
+        onZoomExtents={zoomExtents}
         paused={paused}
         onTogglePause={() => setPaused(p => !p)}
         deadEndMode={deadEndMode}

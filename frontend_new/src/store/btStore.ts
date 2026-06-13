@@ -108,6 +108,12 @@ function active(s: BTState): TreeState | undefined {
 }
 
 export const useActiveBlueprint = () => useBtStore((s) => active(s)?.blueprint ?? null);
+export const useTreeRootStatus = (treeId: string): NodeStatus =>
+  useBtStore((s) => {
+    const tree = s.trees[treeId];
+    if (!tree) return 'IDLE';
+    return tree.statusById[tree.blueprint.root_id] ?? 'IDLE';
+  });
 export const useActiveNodesById = () => useBtStore((s) => active(s)?.nodesById);
 export const useNodeDef = (id: number) => useBtStore((s) => active(s)?.nodesById.get(id));
 export const useNodeStatus = (id: number): NodeStatus =>

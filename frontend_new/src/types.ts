@@ -1,6 +1,6 @@
 // === WebSocket protocol types (match backend contract) ===
 
-export type ConnectionStatus = 'connected' | 'simulating' | 'disconnected';
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
 export interface WsFrame {
   type: string;
@@ -176,7 +176,7 @@ export const DEFAULT_SCENE_SETTINGS: SceneSettings = {
   actionEdges: false,
   edgeColor: '#525252',
   menuBg: '#0f172a',
-  sceneBg: '#2e2f33',
+  sceneBg: '#0f172a',
   gridVisible: true,
   gridOpacity: 0.5,
   gridColor: '#1e293b',

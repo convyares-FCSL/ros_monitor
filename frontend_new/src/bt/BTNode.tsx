@@ -28,7 +28,7 @@ const CORE_CLASS: Record<NodeStatus, string> = {
 
 // One tree node: decorator caps stacked on top, services inside, core block at
 // the base. Subscribes to just its own status so a delta re-renders only it.
-export function BTNode({ box }: { box: NodeBox }) {
+export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (nodeId: number, x: number, y: number) => void }) {
   const node = useNodeDef(box.id);
   const status = useNodeStatus(box.id);
   const selected = useBtStore((s) => s.selectedNodeId === box.id);
@@ -44,19 +44,29 @@ export function BTNode({ box }: { box: NodeBox }) {
       className="absolute select-none"
       style={{ left: box.x, top: box.y, width: box.w }}
       onClick={(e) => { e.stopPropagation(); select(box.id); }}
+      onDoubleClick={(e) => {
+        if (!collapsed || !box.hasChildren) return;
+        e.stopPropagation();
+        toggleCollapse(box.id);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu?.(box.id, e.clientX, e.clientY);
+      }}
     >
       {node.decorators.map((dec) => (
         <div key={dec.id}
-          className="flex items-center px-2 text-[10px] font-mono text-white/55 bg-[#1f2937] border border-white/10 rounded-t-sm"
-          style={{ height: CAP_H }}>
+          className="flex items-center px-2 text-[10px] font-mono text-white/55 border border-white/10 rounded-t-sm"
+          style={{ height: CAP_H, background: 'var(--menu-bg-solid, rgba(15,23,42,0.95))' }}>
           {decoratorLabel(dec)}
         </div>
       ))}
 
       {node.services.map((svc) => (
         <div key={svc.id}
-          className="flex items-center mx-2 px-2 text-[9.5px] font-mono text-white/40 bg-slate-800/80 border border-white/10"
-          style={{ height: SVC_H }}>
+          className="flex items-center mx-2 px-2 text-[9.5px] font-mono text-white/40 border border-white/10"
+          style={{ height: SVC_H, background: 'color-mix(in srgb, var(--menu-bg-solid, rgba(15,23,42,0.95)) 84%, black)' }}>
           <span className="truncate">⚙ {svc.name} · {svc.tick_ms}ms</span>
         </div>
       ))}

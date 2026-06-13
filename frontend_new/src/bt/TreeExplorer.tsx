@@ -1,6 +1,5 @@
-import { useState } from 'react';
 import { ChevronLeft, ChevronRight, GitBranch } from 'lucide-react';
-import { useBtStore, useTreeIds, useActiveBlueprint, useNodeStatus } from '../store/btStore';
+import { useBtStore, useTreeIds, useActiveBlueprint, useNodeStatus, useTreeRootStatus } from '../store/btStore';
 import type { BTNodeDef, NodeStatus } from './types';
 
 const STATUS_DOT: Record<NodeStatus, string> = {
@@ -14,8 +13,7 @@ const PANEL_BG = 'var(--menu-bg, rgba(15,23,42,0.85))';
 
 // Left-hand explorer: every tree streaming into the store, plus the active
 // tree's node list. Clicking a node focuses + selects it on the canvas.
-export function TreeExplorer({ onFocusNode }: { onFocusNode: (id: number) => void }) {
-  const [open, setOpen] = useState(true);
+export function TreeExplorer({ open, onToggle, onFocusNode }: { open: boolean; onToggle: () => void; onFocusNode: (id: number) => void }) {
   const treeIds = useTreeIds();
   const activeTreeId = useBtStore((s) => s.activeTreeId);
   const setActiveTree = useBtStore((s) => s.setActiveTree);
@@ -24,7 +22,7 @@ export function TreeExplorer({ onFocusNode }: { onFocusNode: (id: number) => voi
   return (
     <>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggle}
         className="absolute z-30 w-6 h-10 flex items-center justify-center backdrop-blur-xl border border-white/[0.08] rounded-r-md text-white/50 hover:text-white hover:bg-white/5 transition-all duration-300"
         style={{ background: PANEL_BG, top: '88px', left: open ? '18.75rem' : '0' }}
         title={open ? 'Collapse' : 'Expand'}
@@ -33,7 +31,7 @@ export function TreeExplorer({ onFocusNode }: { onFocusNode: (id: number) => voi
       </button>
 
       <aside
-        className={`absolute left-3 top-[68px] bottom-[92px] w-72 z-20 rounded-2xl backdrop-blur-2xl border flex flex-col overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${open ? 'translate-x-0' : '-translate-x-[calc(100%+1.5rem)]'}`}
+        className={`absolute left-3 top-[68px] bottom-[208px] w-72 z-20 rounded-2xl backdrop-blur-2xl border flex flex-col overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${open ? 'translate-x-0' : '-translate-x-[calc(100%+1.5rem)]'}`}
         style={{ background: PANEL_BG, borderColor: 'rgba(255,255,255,0.08)' }}
       >
         {/* Trees */}
@@ -46,12 +44,7 @@ export function TreeExplorer({ onFocusNode }: { onFocusNode: (id: number) => voi
             <div className="text-[10px] font-mono text-white/25 italic px-2 py-1">no trees</div>
           ) : (
             treeIds.map((id) => (
-              <button key={id} onClick={() => setActiveTree(id)}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left hover:bg-white/[0.04]"
-                style={{ background: id === activeTreeId ? 'rgba(6,182,212,0.12)' : 'transparent' }}>
-                <GitBranch className="w-3.5 h-3.5 shrink-0" style={{ color: id === activeTreeId ? '#06b6d4' : 'rgba(255,255,255,0.4)' }} />
-                <span className={`text-[12px] font-semibold truncate ${id === activeTreeId ? 'text-white' : 'text-white/60'}`}>{id}</span>
-              </button>
+              <TreeRow key={id} id={id} active={id === activeTreeId} onSelect={() => setActiveTree(id)} />
             ))
           )}
         </div>
@@ -68,6 +61,19 @@ export function TreeExplorer({ onFocusNode }: { onFocusNode: (id: number) => voi
         </div>
       </aside>
     </>
+  );
+}
+
+function TreeRow({ id, active, onSelect }: { id: string; active: boolean; onSelect: () => void }) {
+  const status = useTreeRootStatus(id);
+  return (
+    <button onClick={onSelect}
+      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-left hover:bg-white/[0.04]"
+      style={{ background: active ? 'rgba(6,182,212,0.12)' : 'transparent' }}>
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[status]} ${status === 'RUNNING' ? 'animate-pulse' : ''}`} />
+      <GitBranch className="w-3.5 h-3.5 shrink-0" style={{ color: active ? '#06b6d4' : 'rgba(255,255,255,0.4)' }} />
+      <span className={`text-[12px] font-semibold truncate ${active ? 'text-white' : 'text-white/60'}`}>{id}</span>
+    </button>
   );
 }
 

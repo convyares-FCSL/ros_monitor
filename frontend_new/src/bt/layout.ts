@@ -6,7 +6,7 @@ export const NODE_W = 200;
 export const CAP_H = 24;   // decorator cap
 export const SVC_H = 22;   // service row
 export const CORE_H = 52;  // core task block
-export const ROW_GAP = 196; // vertical distance between depth levels
+export const ROW_GAP = 168; // vertical distance between depth levels
 export const GAP_X = 40;   // horizontal gap between sibling leaves
 
 export interface NodeBox {

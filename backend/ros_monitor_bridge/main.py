@@ -4,8 +4,7 @@ import asyncio
 import logging
 import os
 import threading
-
-import websockets
+from dataclasses import dataclass
 
 from ros_monitor_bridge.config import (
     DEFAULT_HTTP_PORT,
@@ -16,16 +15,31 @@ from ros_monitor_bridge.config import (
 )
 from ros_monitor_bridge.ros_bridge import ROS_AVAILABLE, run_ros2_node
 from ros_monitor_bridge.runtime import BridgeRuntime
-from ros_monitor_bridge.server import (
-    create_ws_handler,
-    process_plain_http_request,
-    run_http_server,
-    websocket_broadcaster,
-)
 from ros_monitor_bridge.bt_simulation import BTSimulation
 from ros_monitor_bridge.btros_bridge import DEFAULT_GROOT_PORT, BTRosBridge
 from ros_monitor_bridge.simulation import SimulatedBridge
 from ros_monitor_bridge.utils import RateLimiter
+
+
+@dataclass(slots=True)
+class ResolvedRunMode:
+    mode: str
+    no_ros: bool
+    introspection: str
+    behavior_tree: str
+    use_simulated_introspection: bool
+    use_internal_bt_demo: bool
+    btros: str | None
+    warnings: tuple[str, ...]
+
+    def event_payload(self) -> dict[str, str | bool | None]:
+        return {
+            "mode": self.mode,
+            "no_ros": self.no_ros,
+            "introspection": self.introspection,
+            "behavior_tree": self.behavior_tree,
+            "bt_endpoint": self.btros,
+        }
 
 
 def main():
@@ -34,21 +48,7 @@ def main():
 
     args = parse_args()
     frontend_dir = resolve_frontend_dir()
-
-    # --- Standardized run mode ---
-    #   --sim   : NO ROS — never use rclpy (the introspection view runs on demo data)
-    #   --insp  : introspection DEMO (simulated graph) even when ROS is present
-    #   --bt    : Behavior Tree DEMO (bt_simulation)
-    #   --btros : Behavior Tree REAL (Groot2 v4 client)
-    #   (none)  : REAL — connect to the live ROS graph
-    introspection_demo = args.sim or args.insp or not ROS_AVAILABLE
-    use_real_ros = not introspection_demo
-    mode = {
-        "no_ros": not use_real_ros,
-        "introspection": "demo" if introspection_demo else "live",
-        # No explicit BT source → "auto": probe a local Groot2 executor.
-        "behavior_tree": "real" if args.btros else ("demo" if args.bt else "auto"),
-    }
+    run_mode = resolve_run_mode(args)
 
     config = BridgeConfig(
         frontend_dir=frontend_dir,
@@ -56,40 +56,105 @@ def main():
         ws_port=args.ws_port,
         ws_host=DEFAULT_WS_HOST,
         rate_limit_hz=args.rate_limit,
-        sim_mode=introspection_demo,
-        bt_mode=args.bt,
-        btros=args.btros,
+        mode=run_mode.mode,
+        sim_mode=run_mode.use_simulated_introspection,
+        bt_mode=run_mode.use_internal_bt_demo,
+        no_bt=run_mode.behavior_tree == "off",
+        btros=run_mode.btros,
     )
 
-    _log_run_mode(logger, args, mode)
+    for warning in run_mode.warnings:
+        logger.warning(warning)
+    _log_run_mode(logger, run_mode)
 
     runtime = BridgeRuntime()
     rate_limiter = RateLimiter(config.rate_limit_hz)
 
     try:
-        asyncio.run(async_main(config, runtime, rate_limiter, mode, logger))
+        asyncio.run(async_main(config, runtime, rate_limiter, run_mode.event_payload(), logger))
     except KeyboardInterrupt:
         logger.info("Shutting down bridge...")
     finally:
         logger.info("Bridge closed.")
 
 
-def _log_run_mode(logger, args, mode):
+def resolve_run_mode(args) -> ResolvedRunMode:
+    warnings: list[str] = []
+
+    explicit_mode = args.mode
+    effective_mode = explicit_mode or "full"
+
     if args.sim:
-        ros_line = "NOT USED (--sim — no ROS)"
-    elif mode["no_ros"]:
-        ros_line = "not found — falling back to demo introspection"
+        warnings.append("[DEPRECATED] --sim maps to --mode sim.")
+        if explicit_mode and explicit_mode != "sim":
+            raise SystemExit("--sim cannot be combined with --mode values other than sim.")
+        effective_mode = "sim"
+
+    if args.insp:
+        warnings.append(
+            "[DEPRECATED] --insp has no direct canonical equivalent and now maps to --mode sim."
+        )
+        if explicit_mode and explicit_mode != "sim":
+            raise SystemExit("--insp cannot be combined with --mode values other than sim.")
+        effective_mode = "sim"
+
+    if effective_mode == "sim" and args.btros:
+        raise SystemExit("--btros is not supported in --mode sim. Use --mode full or --mode demo.")
+
+    if args.no_ros_demo and effective_mode != "demo":
+        warnings.append(f"[WARN] --no-ros-demo is ignored in --mode {effective_mode}.")
+
+    legacy_bt_demo = False
+    if args.bt:
+        warnings.append(
+            "[DEPRECATED] --bt is ambiguous. Use --mode sim for internal simulated BT, or --mode demo for bundled local BT demo."
+        )
+        if effective_mode == "sim":
+            warnings.append("[WARN] --bt is redundant in --mode sim; simulated BT is already the default.")
+        elif explicit_mode == "demo":
+            warnings.append("[WARN] --bt is ignored in --mode demo; use the bundled BT demo or --no-bt.")
+        else:
+            legacy_bt_demo = True
+
+    introspection = "demo" if effective_mode == "sim" else "live"
+    no_ros = effective_mode == "sim"
+
+    if args.no_bt:
+        behavior_tree = "off"
+    elif effective_mode == "sim":
+        behavior_tree = "demo"
+    elif args.btros:
+        behavior_tree = "real"
+    elif legacy_bt_demo:
+        behavior_tree = "demo"
     else:
-        ros_line = "connected (live graph)"
-    insp = "DEMO (simulated graph)" if mode["introspection"] == "demo" else "LIVE (real ROS graph)"
+        behavior_tree = "auto"
+
+    return ResolvedRunMode(
+        mode=effective_mode,
+        no_ros=no_ros,
+        introspection=introspection,
+        behavior_tree=behavior_tree,
+        use_simulated_introspection=effective_mode == "sim",
+        use_internal_bt_demo=behavior_tree == "demo",
+        btros=args.btros,
+        warnings=tuple(warnings),
+    )
+
+
+def _log_run_mode(logger, run_mode: ResolvedRunMode):
+    ros_line = "NOT USED (sim mode)" if run_mode.no_ros else "connected (live ROS graph)"
+    insp = "DEMO (simulated graph)" if run_mode.introspection == "demo" else "LIVE (real ROS graph)"
     bt = {
-        "real": f"REAL (Groot2 {args.btros})",
+        "real": f"REAL (Groot2 {run_mode.btros})",
         "demo": "DEMO (bt_simulation)",
         "auto": "AUTO (probing localhost:1667 for a Groot2 executor)",
-    }[mode["behavior_tree"]]
+        "off": "OFF (--no-bt)",
+    }[run_mode.behavior_tree]
     bar = "=" * 64
     logger.info(bar)
     logger.info(" RUN MODE")
+    logger.info(f"   Top-level mode : {run_mode.mode.upper()}")
     logger.info(f"   ROS 2          : {ros_line}")
     logger.info(f"   Introspection  : {insp}")
     logger.info(f"   Behavior Tree  : {bt}")
@@ -105,6 +170,14 @@ async def mode_broadcaster(runtime, mode):
 
 
 async def async_main(config, runtime, rate_limiter, mode, logger):
+    import websockets
+    from ros_monitor_bridge.server import (
+        create_ws_handler,
+        process_plain_http_request,
+        run_http_server,
+        websocket_broadcaster,
+    )
+
     runtime.attach_loop(asyncio.get_running_loop())
     stop_event = threading.Event()
     ros_thread = None
@@ -134,15 +207,16 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
             ros_thread.start()
 
         # The BT data sources are independent: they run alongside either the ROS
-        # bridge or the simulation. --bt = Python demo emitter; --btros = real
-        # Groot2 v4 client against a live executor.
+        # bridge or the simulation.
         bt_sim = None
         if config.bt_mode:
             bt_sim = BTSimulation(runtime, logger)
             bt_sim.start()
 
         bt_ros = None
-        if config.btros:
+        if config.no_bt:
+            bt_ros = None
+        elif config.btros:
             host, _, port = config.btros.partition(":")
             bt_ros = BTRosBridge(runtime, logger, host=host or "localhost",
                                  port=int(port) if port else DEFAULT_GROOT_PORT)
@@ -173,20 +247,40 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
             broadcaster_task.cancel()
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="ROS 2 Browser-based 3D Network Visualizer Bridge")
     parser.add_argument("--port", type=int, default=DEFAULT_HTTP_PORT, help="Port to serve frontend files (HTTP)")
     parser.add_argument("--ws-port", type=int, default=DEFAULT_WS_PORT, help="Port to run WebSocket server")
-    parser.add_argument("--sim", action="store_true", help="NO ROS — never use rclpy (introspection runs on demo data)")
+    parser.add_argument(
+        "--mode",
+        choices=("sim", "demo", "full"),
+        default=None,
+        help="Canonical run mode: sim = offline simulation, demo = bundled local demos, full = live system",
+    )
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="Deprecated alias for --mode sim",
+    )
     parser.add_argument(
         "--insp",
         action="store_true",
-        help="Introspection DEMO — use the simulated ROS graph even when ROS is present",
+        help="Deprecated alias for introspection demo; currently maps to --mode sim",
     )
     parser.add_argument(
         "--bt",
         action="store_true",
-        help="Behavior Tree DEMO — run the demo tree emitter (bt_blueprint / bt_delta)",
+        help="Deprecated, ambiguous BT demo flag retained for backward compatibility",
+    )
+    parser.add_argument(
+        "--no-bt",
+        action="store_true",
+        help="Disable behavior tree integration entirely",
+    )
+    parser.add_argument(
+        "--no-ros-demo",
+        action="store_true",
+        help="Launcher-facing demo option; ignored by the bridge outside demo-mode orchestration",
     )
     parser.add_argument(
         "--btros",
@@ -201,7 +295,7 @@ def parse_args():
         default=DEFAULT_RATE_LIMIT_HZ,
         help="Throttling rate for messages (Hz)",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def resolve_frontend_dir():
@@ -217,4 +311,3 @@ def resolve_frontend_dir():
         frontend_dir = os.path.abspath(os.path.join(os.getcwd(), "frontend"))
     os.makedirs(frontend_dir, exist_ok=True)
     return frontend_dir
-

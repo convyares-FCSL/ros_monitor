@@ -67,7 +67,7 @@ export function BTInspector() {
         style={{ background: PANEL_BG, borderColor: 'rgba(255,255,255,0.08)' }}
       >
         {/* --- Top: Blackboard (always shown, tree-wide) --- */}
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="h-1/2 min-h-0 flex flex-col shrink-0">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
             <span className="text-[9px] font-bold tracking-[0.18em] text-white/40">BLACKBOARD</span>
             {blueprint && <span className="text-[10px] font-mono text-white/35 truncate max-w-[55%]">{blueprint.tree_id}</span>}
@@ -89,7 +89,7 @@ export function BTInspector() {
         </div>
 
         {/* --- Bottom: Node inspector (selected item) --- */}
-        <div className="flex-1 min-h-0 flex flex-col border-t border-white/[0.1]">
+        <div className="h-1/2 min-h-0 flex flex-col border-t border-white/[0.1]">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
             <span className="text-[9px] font-bold tracking-[0.18em] text-white/40">NODE INSPECTOR</span>
             {node && (

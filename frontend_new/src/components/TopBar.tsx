@@ -54,14 +54,20 @@ export function TopBar({ title, icon: Icon = Activity, children, onOpenSettings,
   );
 }
 
-// Shows the bridge run mode (real / demo / no-ROS) so it's always clear what
-// data you're looking at.
+// Shows the bridge run mode and the concrete data source per view. MODE=SIM is
+// what tells the user the whole visualizer is offline; INSP/BT describe whether
+// each pane is on live, demo, auto-probed, or disabled data.
 function ModeBadge() {
   const mode = useUIStore((s) => s.bridgeMode);
   if (!mode) return null;
+  const topLevel = {
+    sim: { t: 'SIM', c: '#38bdf8' },
+    demo: { t: 'DEMO', c: '#f59e0b' },
+    full: { t: 'FULL', c: '#10b981' },
+  }[mode.mode];
   const insp = mode.introspection === 'live'
     ? { t: 'LIVE', c: '#10b981' }
-    : { t: mode.no_ros ? 'NO-ROS' : 'DEMO', c: '#f59e0b' };
+    : { t: 'DEMO', c: '#f59e0b' };
   const bt = mode.behavior_tree === 'real'
     ? { t: 'REAL', c: '#10b981' }
     : mode.behavior_tree === 'demo'
@@ -71,7 +77,8 @@ function ModeBadge() {
         : { t: 'OFF', c: '#6b7280' };
   return (
     <div className="hidden lg:flex items-center gap-2 ml-1 pl-3 border-l border-white/10"
-      title="Bridge data mode — INSP = 3D introspection, BT = behavior tree">
+      title="Bridge run mode — MODE = top-level launcher mode, INSP = 3D introspection, BT = behavior tree">
+      <Chip label="MODE" value={topLevel.t} color={topLevel.c} />
       <Chip label="INSP" value={insp.t} color={insp.c} />
       <Chip label="BT" value={bt.t} color={bt.c} />
     </div>
