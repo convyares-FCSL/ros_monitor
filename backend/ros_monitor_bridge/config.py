@@ -23,4 +23,5 @@ class BridgeConfig:
     ws_host: str = DEFAULT_WS_HOST
     rate_limit_hz: float = DEFAULT_RATE_LIMIT_HZ
     sim_mode: bool = False
+    bt_mode: bool = False
 
