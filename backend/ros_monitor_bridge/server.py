@@ -91,7 +91,10 @@ def run_http_server(root_dir, port, logger):
     ThreadingTCPServer.allow_reuse_address = True
     with ThreadingTCPServer(("", port), CORSHTTPRequestHandler) as httpd:
         logger.info(f"Serving frontend static files from: {root_dir}")
-        logger.info(f"Open in browser: http://localhost:{port}")
+        url = f"http://localhost:{port}"
+        banner = f"\n\033[1;36m{'━' * 52}\033[0m\n\033[1;36m  ► Open in browser:  {url}\033[0m\n\033[1;36m{'━' * 52}\033[0m"
+        print(banner, flush=True)
+        logger.info(f"Open in browser: {url}")
         try:
             httpd.serve_forever()
         except Exception as exc:

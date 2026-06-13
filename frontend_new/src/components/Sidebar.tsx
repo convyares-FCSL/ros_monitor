@@ -48,7 +48,7 @@ export function Sidebar({
 
   return (
     <>
-      <aside className={`fixed left-3 z-20 flex flex-col w-72 rounded-2xl overflow-hidden
+      <aside className={`absolute left-3 z-20 flex flex-col w-72 rounded-2xl overflow-hidden
         backdrop-blur-2xl transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
         ${open ? 'translate-x-0' : '-translate-x-[calc(100%+12px)]'}`}
         style={{ background: 'var(--menu-bg)', border: `1px solid ${theme.panelBorder}`, top: '68px', height: 'calc(100vh - 68px - 240px)', color: 'var(--menu-text)' }}>
@@ -105,7 +105,7 @@ export function Sidebar({
                 title="Services" entityType="service" colorHex={theme.serviceColorHex}
                 items={graph.services
                   .filter(s => !genericHidden || !isGenericService(s.name))
-                  .map(s => ({ id: `service:${s.name}`, label: s.name, sub: s.clients.length > 0 ? 'connected' : 'orphan' }))}
+                  .map(s => ({ id: `service:${s.name}`, label: s.name, sub: s.clients.length > 0 ? (s.servers.length > 0 ? 'connected' : 'orphan') : 'unused' }))}
                 genericItems={graph.services.filter(s => isGenericService(s.name)).map(s => ({ id: `service:${s.name}`, label: s.name }))}
                 visibleCount={graph.services.filter(s => !hiddenItems.has(`service:${s.name}`) && (!genericHidden || !isGenericService(s.name))).length}
                 totalCount={graph.services.length}
@@ -147,7 +147,7 @@ export function Sidebar({
 
       <button
         onClick={onToggle}
-        className={`fixed z-30 w-6 h-10 flex items-center justify-center
+        className={`absolute z-30 w-6 h-10 flex items-center justify-center
           backdrop-blur-xl border border-white/[0.08] rounded-r-md
           hover:opacity-80 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
           ${open ? 'left-[300px]' : 'left-0'}`}

@@ -49,7 +49,7 @@ export function InspectorDrawer({
   return (
     <>
       <button onClick={onToggle}
-        className={`fixed z-30 w-6 h-10 flex items-center justify-center
+        className={`absolute z-30 w-6 h-10 flex items-center justify-center
           backdrop-blur-xl border border-white/[0.08] rounded-l-md
           text-white/50 hover:text-white hover:bg-white/5 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
           ${open ? 'right-[25.75rem]' : 'right-0'}`}
@@ -57,7 +57,7 @@ export function InspectorDrawer({
         {open ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
       </button>
 
-      <aside className={`fixed right-3 w-96 z-20 flex flex-col rounded-2xl overflow-hidden
+      <aside className={`absolute right-3 w-96 z-20 flex flex-col rounded-2xl overflow-hidden
         backdrop-blur-2xl transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
         ${open ? 'translate-x-0' : 'translate-x-[calc(100%+12px)]'}`}
         style={{ background: 'var(--menu-bg)', border: `1px solid ${theme.panelBorder}`, top: '68px', height: 'calc(100vh - 68px - 16px)' }}>

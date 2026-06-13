@@ -277,6 +277,15 @@ export function useTheme() {
   return useContext(ThemeContext);
 }
 
+// Convert a panelBg rgba/hex-with-alpha string to a near-opaque solid variant
+// used for --menu-bg-solid (context menus, dropdowns that must fully obscure content).
+export function solidify(panelBg: string): string {
+  const m = panelBg.match(/^rgba?\(([^,]+),([^,]+),([^,]+)/);
+  if (m) return `rgba(${m[1].trim()},${m[2].trim()},${m[3].trim()},0.97)`;
+  if (/^#[0-9a-fA-F]{8}$/.test(panelBg)) return panelBg.slice(0, 7) + 'f7';
+  return panelBg;
+}
+
 function loadCustomColors(): CustomColors {
   try {
     const saved = localStorage.getItem('ros3d-custom-colors');

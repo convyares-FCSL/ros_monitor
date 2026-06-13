@@ -1,92 +1,85 @@
-# ROS 2 Graph Visualizer
+# ROS Monitor React Frontend
 
-A real-time 3D visualization tool for ROS 2 computation graphs built with React, Three.js, and Vite. Renders nodes, topics, services, and actions as an interactive force-directed graph with animated message particles, lifecycle state indicators, and configurable scene settings.
+`frontend_new/` is the production frontend for the ROS monitor visualizer. It is a React 18 + TypeScript + Vite application that the Python bridge serves on `http://localhost:7260`.
 
-## Features
+## Run It Through the Project Launcher
 
-- **3D Force-Directed Layout** - Nodes, topics, services, and actions are positioned using a real-time force simulation
-- **Message Particles** - Animated packets flow along topic edges showing live pub/sub traffic
-- **Lifecycle States** - Visual emissive indicators for ROS 2 node lifecycle transitions
-- **Frequency Monitoring** - Hz badges and sparklines for topic publish rates with stale detection
-- **Scene Settings** - Customizable entity colors, sizes, outlines, background, and particle scale
-- **Theme Presets** - Multiple built-in themes (Default, Midnight, Ember, Forest, Arctic, Neon)
-- **Inspector Drawer** - Click any entity or message particle to inspect details
-- **Sidebar** - Filterable list of all graph entities with hide/isolate controls
-- **Dead-End Modes** - Hide, dim, or show unconnected topics
-- **Simulation Mode** - Built-in ROS graph simulator for demo/development without a live ROS system
-
-## Tech Stack
-
-- **React 18** with TypeScript
-- **Three.js** for 3D rendering (postprocessing bloom, force layout, particle system)
-- **Tailwind CSS** for UI styling
-- **Vite** for bundling and dev server
-- **Lucide React** for icons
-
-## Prerequisites
-
-- Node.js 18+
-- npm or pnpm
-
-## Getting Started
+The canonical entrypoint is the repo launcher:
 
 ```bash
-# Install dependencies
-npm install
+./scripts/run_visualizer_new.sh
+```
 
-# Start the development server
+That starts the visualizer in **full** mode by default and serves the built frontend at:
+
+```text
+http://localhost:7260
+```
+
+Supported launcher modes:
+
+```bash
+./scripts/run_visualizer_new.sh --mode sim
+./scripts/run_visualizer_new.sh --mode demo
+./scripts/run_visualizer_new.sh --mode full
+```
+
+Mode summary:
+
+| Mode | What it does |
+|---|---|
+| `sim` | Fully offline. The backend simulates ROS introspection and BT data internally. No ROS 2 runtime is required. |
+| `demo` | Starts the bundled local demos and uses real local protocols. By default this includes the ROS demo and the BT demo. |
+| `full` | Connects to the live ROS 2 graph and auto-probes for a real BT/Groot2 publisher. This is the default. |
+
+Useful variants:
+
+```bash
+# Reuse existing frontend build output
+./scripts/run_visualizer_new.sh --skip-build
+
+# Demo ROS only
+./scripts/run_visualizer_new.sh --mode demo --no-bt
+
+# Demo BT only
+./scripts/run_visualizer_new.sh --mode demo --no-ros-demo
+
+# Full mode with an explicit BT endpoint
+./scripts/run_visualizer_new.sh --mode full --btros localhost:1667
+```
+
+## Frontend-Only Development
+
+Install dependencies:
+
+```bash
+cd frontend_new
+npm install
+```
+
+Run the Vite dev server:
+
+```bash
 npm run dev
 ```
 
-The app opens at `http://localhost:5173`. By default it runs in **simulation mode**, generating a synthetic ROS 2 graph for demonstration.
+The dev server opens on `http://localhost:5173`.
 
-## Connecting to a Live ROS 2 System
-
-To visualize a real ROS 2 system, disable simulation mode via the header toggle and ensure a WebSocket bridge is running at `ws://localhost:8765` that publishes graph updates in the expected JSON format.
-
-## Build
+For live backend data during frontend development, run the bridge separately in another terminal:
 
 ```bash
-# Production build
+./scripts/run_visualizer_new.sh --skip-build --mode full
+```
+
+The frontend derives the WebSocket host from the page hostname and connects to the bridge on port `8765`.
+
+The app uses one shared application-level WebSocket connection. Runtime behavior is selected only through the launcher run modes above; there are no browser-local simulation toggles anymore.
+
+## Build Commands
+
+```bash
 npm run build
-
-# Preview the production build
 npm run preview
-
-# Type check
 npm run typecheck
-
-# Lint
 npm run lint
 ```
-
-## Project Structure
-
-```
-src/
-  App.tsx                  # Main application component
-  types.ts                 # TypeScript type definitions
-  components/              # React UI components
-    Header.tsx             # Top bar with connection status and controls
-    Sidebar.tsx            # Entity list with filtering
-    InspectorDrawer.tsx    # Detail panel for selected entities
-    ControlsOverlay.tsx    # Camera/view controls
-    SettingsModal.tsx      # Scene configuration modal
-    FrequencySparkline.tsx # Hz visualization component
-  hooks/
-    useRosGraph.ts         # WebSocket connection and graph state
-    useTheme.ts            # Theme management
-    useThreeScene.ts       # Three.js scene lifecycle hook
-  three/
-    SceneManager.ts        # Main 3D scene orchestration
-    ForceLayout.ts         # Force-directed graph layout
-    EdgeRenderer.ts        # Bezier arc edge rendering
-    ParticleSystem.ts      # Animated message particles
-    LabelSystem.ts         # Text sprite labels and Hz badges
-  simulation/
-    rosSimulator.ts        # Synthetic ROS graph generator
-```
-
-## License
-
-Private

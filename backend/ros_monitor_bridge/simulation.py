@@ -259,6 +259,9 @@ def _mock_topology():
             "name": "/set_pose",
             "types": ["robot_localization/srv/SetPose"],
             "servers": ["/localization_node"],
+            # Match the real bridge's contract — graph_update services always
+            # carry a clients list; the frontend types require it.
+            "clients": ["/planner_node"],
         }
     ]
     actions = [
