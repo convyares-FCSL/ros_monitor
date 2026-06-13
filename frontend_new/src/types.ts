@@ -69,6 +69,16 @@ export interface LifecycleEvent {
   transition_id: number;
 }
 
+// log_event — real ROS /rosout output (rcl_interfaces/msg/Log) or synthetic sim logs
+export interface LogEvent {
+  level: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+  name: string;           // logger / node name
+  msg: string;
+  file?: string;
+  function?: string;
+  line?: number;
+}
+
 // node_params_event
 export interface NodeParamsEvent {
   node_name: string;
@@ -176,7 +186,7 @@ export const DEFAULT_SCENE_SETTINGS: SceneSettings = {
   actionEdges: false,
   edgeColor: '#525252',
   menuBg: '#0f172a',
-  sceneBg: '#0f172a',
+  sceneBg: '#2a2c32',
   gridVisible: true,
   gridOpacity: 0.5,
   gridColor: '#1e293b',

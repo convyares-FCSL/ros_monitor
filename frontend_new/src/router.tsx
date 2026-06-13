@@ -3,6 +3,7 @@ import {
   Home as HomeIcon, Boxes, Workflow, ScrollText, Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
+import { useSettingsStore } from './store/settingsStore';
 
 export interface RouteDef {
   path: string;
@@ -25,9 +26,16 @@ export const ROUTES: RouteDef[] = [
 
 export const DEFAULT_PATH = 'home';
 
+// The fallback view is configurable on the Settings page; fall back to the
+// hardcoded default if the stored value isn't a real route.
+function defaultPath(): string {
+  const configured = useSettingsStore.getState().defaultView;
+  return ROUTES.some((r) => r.path === configured) ? configured : DEFAULT_PATH;
+}
+
 function readHash(): string {
   const raw = window.location.hash.replace(/^#\/?/, '');
-  return ROUTES.some((r) => r.path === raw) ? raw : DEFAULT_PATH;
+  return ROUTES.some((r) => r.path === raw) ? raw : defaultPath();
 }
 
 export function useHashRoute(): [string, (path: string) => void] {

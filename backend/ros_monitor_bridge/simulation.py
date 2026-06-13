@@ -61,6 +61,8 @@ class SimulatedBridge:
         self._lifecycle_states = {n: 'unconfigured' for n in _LIFECYCLE_NODES}
         self._lifecycle_next = {n: rng.uniform(2.0, 4.5) for n in _LIFECYCLE_NODES}
         self._last_hz_emit = 0.0
+        self._log_idx = 0
+        self._last_log_emit = 0.0
 
     def start(self):
         self.running = True
@@ -130,6 +132,12 @@ class SimulatedBridge:
                         "data": {"service_name": "/set_pose"},
                     }
                 )
+
+            # --- Synthetic log lines (every ~2.5s, rotating sample) ---
+            if now - self._last_log_emit >= 2.5:
+                self.runtime.dispatch_event(_log_event(now, self._log_idx))
+                self._log_idx += 1
+                self._last_log_emit = now
 
             # --- Action simulation ---
             if not action_active and int(now) % 12 == 0:
@@ -273,6 +281,34 @@ def _mock_topology():
         }
     ]
     return nodes, topics, services, actions
+
+
+# Rotating sample log lines for the no-ROS demo so the Logging console isn't empty.
+_SAMPLE_LOGS = [
+    ("info", "/control_node", "Control loop running at 50 Hz"),
+    ("debug", "/sensor_hub", "Fused 3 sensor streams (imu, scan, odom)"),
+    ("warn", "/planner_node", "Replanning: path blocked, retrying with inflated costmap"),
+    ("info", "/lifecycle_manager", "All managed nodes reported active"),
+    ("error", "/planner_node", "Goal rejected: no valid trajectory within tolerance"),
+    ("info", "/sensor_hub", "Calibration parameters loaded from config"),
+    ("warn", "/control_node", "Command latency 142ms exceeds 100ms budget"),
+]
+
+
+def _log_event(now, idx):
+    level, name, msg = _SAMPLE_LOGS[idx % len(_SAMPLE_LOGS)]
+    return {
+        "type": "log_event",
+        "timestamp": now,
+        "data": {
+            "level": level,
+            "name": name,
+            "msg": msg,
+            "file": "sim.py",
+            "function": "sim_loop",
+            "line": 1,
+        },
+    }
 
 
 def _pose_event(now, t):
