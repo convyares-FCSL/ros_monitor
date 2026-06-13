@@ -34,37 +34,77 @@ def main():
 
     args = parse_args()
     frontend_dir = resolve_frontend_dir()
+
+    # --- Standardized run mode ---
+    #   --sim   : NO ROS — never use rclpy (the introspection view runs on demo data)
+    #   --insp  : introspection DEMO (simulated graph) even when ROS is present
+    #   --bt    : Behavior Tree DEMO (bt_simulation)
+    #   --btros : Behavior Tree REAL (Groot2 v4 client)
+    #   (none)  : REAL — connect to the live ROS graph
+    introspection_demo = args.sim or args.insp or not ROS_AVAILABLE
+    use_real_ros = not introspection_demo
+    mode = {
+        "no_ros": not use_real_ros,
+        "introspection": "demo" if introspection_demo else "live",
+        # No explicit BT source → "auto": probe a local Groot2 executor.
+        "behavior_tree": "real" if args.btros else ("demo" if args.bt else "auto"),
+    }
+
     config = BridgeConfig(
         frontend_dir=frontend_dir,
         http_port=args.port,
         ws_port=args.ws_port,
         ws_host=DEFAULT_WS_HOST,
         rate_limit_hz=args.rate_limit,
-        sim_mode=args.sim or not ROS_AVAILABLE,
+        sim_mode=introspection_demo,
         bt_mode=args.bt,
         btros=args.btros,
     )
 
-    if ROS_AVAILABLE:
-        logger.info("ROS 2 environment detected. Running in standard ROS 2 Mode.")
-    else:
-        logger.warning("ROS 2 (rclpy/rosidl) not found. Falling back to Simulation Mode.")
-
-    if args.sim:
-        logger.info("Simulation mode forced via --sim flag.")
+    _log_run_mode(logger, args, mode)
 
     runtime = BridgeRuntime()
     rate_limiter = RateLimiter(config.rate_limit_hz)
 
     try:
-        asyncio.run(async_main(config, runtime, rate_limiter, logger))
+        asyncio.run(async_main(config, runtime, rate_limiter, mode, logger))
     except KeyboardInterrupt:
         logger.info("Shutting down bridge...")
     finally:
         logger.info("Bridge closed.")
 
 
-async def async_main(config, runtime, rate_limiter, logger):
+def _log_run_mode(logger, args, mode):
+    if args.sim:
+        ros_line = "NOT USED (--sim — no ROS)"
+    elif mode["no_ros"]:
+        ros_line = "not found — falling back to demo introspection"
+    else:
+        ros_line = "connected (live graph)"
+    insp = "DEMO (simulated graph)" if mode["introspection"] == "demo" else "LIVE (real ROS graph)"
+    bt = {
+        "real": f"REAL (Groot2 {args.btros})",
+        "demo": "DEMO (bt_simulation)",
+        "auto": "AUTO (probing localhost:1667 for a Groot2 executor)",
+    }[mode["behavior_tree"]]
+    bar = "=" * 64
+    logger.info(bar)
+    logger.info(" RUN MODE")
+    logger.info(f"   ROS 2          : {ros_line}")
+    logger.info(f"   Introspection  : {insp}")
+    logger.info(f"   Behavior Tree  : {bt}")
+    logger.info(bar)
+
+
+async def mode_broadcaster(runtime, mode):
+    """Re-announce the run mode so late-joining clients can show a badge."""
+    import time as _time
+    while True:
+        runtime.dispatch_event({"type": "bridge_mode", "timestamp": _time.time(), "data": mode})
+        await asyncio.sleep(3.0)
+
+
+async def async_main(config, runtime, rate_limiter, mode, logger):
     runtime.attach_loop(asyncio.get_running_loop())
     stop_event = threading.Event()
     ros_thread = None
@@ -76,6 +116,7 @@ async def async_main(config, runtime, rate_limiter, logger):
     ):
         logger.info(f"WebSocket server started on ws://{config.ws_host}:{config.ws_port}")
         broadcaster_task = asyncio.create_task(websocket_broadcaster(runtime, logger))
+        mode_task = asyncio.create_task(mode_broadcaster(runtime, mode))
 
         http_thread = threading.Thread(
             target=run_http_server,
@@ -106,6 +147,12 @@ async def async_main(config, runtime, rate_limiter, logger):
             bt_ros = BTRosBridge(runtime, logger, host=host or "localhost",
                                  port=int(port) if port else DEFAULT_GROOT_PORT)
             bt_ros.start()
+        elif not config.bt_mode:
+            # No explicit BT source — auto-probe a local Groot2 executor so that
+            # running with no args still picks up a live tree if one is present.
+            bt_ros = BTRosBridge(runtime, logger, host="localhost",
+                                 port=DEFAULT_GROOT_PORT, quiet=True)
+            bt_ros.start()
 
         try:
             await asyncio.Future()
@@ -122,6 +169,7 @@ async def async_main(config, runtime, rate_limiter, logger):
                 bt_sim.stop()
             if bt_ros is not None:
                 bt_ros.stop()
+            mode_task.cancel()
             broadcaster_task.cancel()
 
 
@@ -129,11 +177,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="ROS 2 Browser-based 3D Network Visualizer Bridge")
     parser.add_argument("--port", type=int, default=DEFAULT_HTTP_PORT, help="Port to serve frontend files (HTTP)")
     parser.add_argument("--ws-port", type=int, default=DEFAULT_WS_PORT, help="Port to run WebSocket server")
-    parser.add_argument("--sim", action="store_true", help="Force simulation mode")
+    parser.add_argument("--sim", action="store_true", help="NO ROS — never use rclpy (introspection runs on demo data)")
+    parser.add_argument(
+        "--insp",
+        action="store_true",
+        help="Introspection DEMO — use the simulated ROS graph even when ROS is present",
+    )
     parser.add_argument(
         "--bt",
         action="store_true",
-        help="Start the Behavior Tree demo emitter (bt_blueprint / bt_delta events)",
+        help="Behavior Tree DEMO — run the demo tree emitter (bt_blueprint / bt_delta)",
     )
     parser.add_argument(
         "--btros",

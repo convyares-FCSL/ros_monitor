@@ -203,13 +203,16 @@ class BTRosBridge:
     """Polls a Groot2 v4 executor and forwards bt_blueprint / bt_delta events."""
 
     def __init__(self, runtime, logger, host='localhost', port=DEFAULT_GROOT_PORT,
-                 status_hz=15.0, blueprint_reemit_s=3.0):
+                 status_hz=15.0, blueprint_reemit_s=3.0, quiet=False):
         self.runtime = runtime
         self.logger = logger
         self.host = host
         self.port = port
         self.status_period = 1.0 / status_hz
         self.blueprint_reemit_s = blueprint_reemit_s
+        # quiet = auto-probe mode: don't warn on every failed connection attempt
+        # (there may simply be no executor running). Connections still log.
+        self.quiet = quiet
         self._thread = None
         self._running = False
         self._req_id = 0
@@ -218,7 +221,10 @@ class BTRosBridge:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        self.logger.info(f"BTRos (Groot2 v4) bridge started → tcp://{self.host}:{self.port}")
+        if self.quiet:
+            self.logger.info(f"Auto-probing for a Groot2 v4 executor on tcp://{self.host}:{self.port} …")
+        else:
+            self.logger.info(f"BTRos (Groot2 v4) bridge started → tcp://{self.host}:{self.port}")
 
     def stop(self):
         self._running = False
@@ -253,7 +259,10 @@ class BTRosBridge:
                 sock.connect(f"tcp://{self.host}:{self.port}")
                 self._session(sock, zmq)
             except Exception as exc:  # noqa: BLE001 — keep retrying any failure
-                self.logger.warning(f"BTRos session error ({exc}); retrying in 2s")
+                if self.quiet:
+                    self.logger.debug(f"BTRos probe: no executor on {self.host}:{self.port} ({exc})")
+                else:
+                    self.logger.warning(f"BTRos session error ({exc}); retrying in 2s")
             finally:
                 sock.close()
             if self._running:
@@ -265,6 +274,7 @@ class BTRosBridge:
         if not xml_payload:
             raise RuntimeError("no FULLTREE reply")
         blueprint = parse_tree_xml(xml_payload.decode('utf-8'))
+        tree_id = blueprint['tree_id']
         known_ids = {n['id'] for n in blueprint['nodes']}
         self.runtime.dispatch_event({
             "type": "bt_blueprint", "timestamp": time.time(), "data": blueprint,
@@ -290,7 +300,8 @@ class BTRosBridge:
             for uid, state in status.items():
                 if uid in known_ids and last_status.get(uid) != state:
                     self.runtime.dispatch_event({
-                        "type": "bt_delta", "timestamp": now, "data": {"id": uid, "state": state},
+                        "type": "bt_delta", "timestamp": now,
+                        "data": {"tree_id": tree_id, "id": uid, "state": state},
                     })
             last_status = status
             time.sleep(self.status_period)

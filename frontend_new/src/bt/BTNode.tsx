@@ -1,4 +1,4 @@
-import { useBtStore } from '../store/btStore';
+import { useBtStore, useNodeDef, useNodeStatus } from '../store/btStore';
 import { CAP_H, SVC_H, CORE_H, type NodeBox } from './layout';
 import type { BTDecorator, NodeStatus } from './types';
 
@@ -29,8 +29,8 @@ const CORE_CLASS: Record<NodeStatus, string> = {
 // One tree node: decorator caps stacked on top, services inside, core block at
 // the base. Subscribes to just its own status so a delta re-renders only it.
 export function BTNode({ box }: { box: NodeBox }) {
-  const node = useBtStore((s) => s.nodesById.get(box.id));
-  const status = useBtStore((s) => s.statusById[box.id] ?? 'IDLE');
+  const node = useNodeDef(box.id);
+  const status = useNodeStatus(box.id);
   const selected = useBtStore((s) => s.selectedNodeId === box.id);
   const collapsed = useBtStore((s) => s.collapsed.has(box.id));
   const select = useBtStore((s) => s.select);

@@ -1,13 +1,8 @@
-import { useEffect, useState } from 'react';
+import { lazy, useEffect, useState } from 'react';
 import {
   Home as HomeIcon, Boxes, Workflow, ScrollText, Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { Home } from './views/Home';
-import { RosIntrospection } from './views/RosIntrospection';
-import { BehaviorTree } from './views/BehaviorTree';
-import { Logging } from './views/Logging';
-import { Settings } from './views/Settings';
 
 export interface RouteDef {
   path: string;
@@ -18,12 +13,14 @@ export interface RouteDef {
 
 // Single source of truth for both routing and the nav sidebar. Add a page by
 // appending one entry here — the nav list renders straight off this array.
+// Views are lazy-loaded so each is its own chunk; the heavy Three.js stack
+// lives in the RosIntrospection chunk and only loads when that page is opened.
 export const ROUTES: RouteDef[] = [
-  { path: 'home', label: 'Home', icon: HomeIcon, Component: Home },
-  { path: 'ros', label: 'ROS Introspection', icon: Boxes, Component: RosIntrospection },
-  { path: 'bt', label: 'Behavior Tree', icon: Workflow, Component: BehaviorTree },
-  { path: 'logging', label: 'Logging', icon: ScrollText, Component: Logging },
-  { path: 'settings', label: 'Settings', icon: SettingsIcon, Component: Settings },
+  { path: 'home', label: 'Home', icon: HomeIcon, Component: lazy(() => import('./views/Home').then((m) => ({ default: m.Home }))) },
+  { path: 'ros', label: 'ROS Introspection', icon: Boxes, Component: lazy(() => import('./views/RosIntrospection').then((m) => ({ default: m.RosIntrospection }))) },
+  { path: 'bt', label: 'Behavior Tree', icon: Workflow, Component: lazy(() => import('./views/BehaviorTree').then((m) => ({ default: m.BehaviorTree }))) },
+  { path: 'logging', label: 'Logging', icon: ScrollText, Component: lazy(() => import('./views/Logging').then((m) => ({ default: m.Logging }))) },
+  { path: 'settings', label: 'Settings', icon: SettingsIcon, Component: lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings }))) },
 ];
 
 export const DEFAULT_PATH = 'home';
