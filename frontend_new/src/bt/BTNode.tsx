@@ -1,0 +1,85 @@
+import { useBtStore } from '../store/btStore';
+import { CAP_H, SVC_H, CORE_H, type NodeBox } from './layout';
+import type { BTDecorator, NodeStatus } from './types';
+
+const SYMBOL: Record<string, string> = {
+  Sequence: '→',
+  ReactiveSequence: '→*',
+  Fallback: '?',
+  ReactiveFallback: '?*',
+  Parallel: '⇉',
+  SubTree: '▣',
+};
+
+function decoratorLabel(dec: BTDecorator): string {
+  const p = (dec.ports ?? {}) as Record<string, number>;
+  if (dec.type === 'Timeout' && p.msec) return `⏱ Timeout ${p.msec / 1000}s`;
+  if (dec.type === 'RetryUntilSuccessful' && p.num_attempts) return `↻ Retry ×${p.num_attempts}`;
+  if (dec.type === 'Inverter') return '¬ Inverter';
+  return dec.name;
+}
+
+const CORE_CLASS: Record<NodeStatus, string> = {
+  IDLE: 'bt-core-idle',
+  RUNNING: 'bt-core-running',
+  SUCCESS: 'bt-core-success',
+  FAILURE: 'bt-core-failure',
+};
+
+// One tree node: decorator caps stacked on top, services inside, core block at
+// the base. Subscribes to just its own status so a delta re-renders only it.
+export function BTNode({ box }: { box: NodeBox }) {
+  const node = useBtStore((s) => s.nodesById.get(box.id));
+  const status = useBtStore((s) => s.statusById[box.id] ?? 'IDLE');
+  const selected = useBtStore((s) => s.selectedNodeId === box.id);
+  const collapsed = useBtStore((s) => s.collapsed.has(box.id));
+  const select = useBtStore((s) => s.select);
+  const toggleCollapse = useBtStore((s) => s.toggleCollapse);
+
+  if (!node) return null;
+  const symbol = SYMBOL[node.type] ?? (node.category === 'condition' ? '◆' : '');
+
+  return (
+    <div
+      className="absolute select-none"
+      style={{ left: box.x, top: box.y, width: box.w }}
+      onClick={(e) => { e.stopPropagation(); select(box.id); }}
+    >
+      {node.decorators.map((dec) => (
+        <div key={dec.id}
+          className="flex items-center px-2 text-[10px] font-mono text-white/55 bg-[#1f2937] border border-white/10 rounded-t-sm"
+          style={{ height: CAP_H }}>
+          {decoratorLabel(dec)}
+        </div>
+      ))}
+
+      {node.services.map((svc) => (
+        <div key={svc.id}
+          className="flex items-center mx-2 px-2 text-[9.5px] font-mono text-white/40 bg-slate-800/80 border border-white/10"
+          style={{ height: SVC_H }}>
+          <span className="truncate">⚙ {svc.name} · {svc.tick_ms}ms</span>
+        </div>
+      ))}
+
+      <div
+        className={`bt-core relative flex items-center gap-2 px-3 rounded-md ${CORE_CLASS[status]} ${selected ? 'ring-2 ring-white/50' : ''} ${node.category === 'subtree' ? 'bt-core-subtree' : ''}`}
+        style={{ height: CORE_H }}
+      >
+        {symbol && <span className="font-mono font-bold text-base text-white shrink-0">{symbol}</span>}
+        <div className="min-w-0 flex-1">
+          <div className="text-[12px] font-semibold text-white truncate leading-tight">{node.name}</div>
+          <div className="text-[9px] font-mono text-white/40 truncate leading-tight">{node.type}</div>
+        </div>
+        {box.hasChildren && (
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleCollapse(box.id); }}
+            className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 text-[10px] shrink-0"
+            title={collapsed ? 'Expand' : 'Collapse'}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
