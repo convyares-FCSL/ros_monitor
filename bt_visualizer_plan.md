@@ -235,32 +235,40 @@ always mounted, so that path rarely runs. Under the router:
 
 ## 6. Phased To-Do checklist
 
-### Phase 0 — Contract & data source (do first)
-- [ ] Lock the `bt_blueprint` / `bt_delta` / `bt_blackboard` schema above.
-- [ ] **[Option A]** Add `bt_simulation.py`: hardcoded demo tree + tick thread; emit
-      `bt_blueprint` on start and on each new client, `bt_delta` on state change.
-- [ ] Wire a `--bt` flag in [main.py](backend/ros_monitor_bridge/main.py) to start it.
-- [ ] Verify raw events arrive: `websocat ws://localhost:8765` shows blueprint + deltas.
+### Phase 0 — Contract & data source ✅ DONE
+- [x] Lock the `bt_blueprint` / `bt_delta` / `bt_blackboard` schema above.
+- [x] **[Option A]** `bt_simulation.py`: hydrogen-dispenser demo tree + BT.CPP-v4-style
+      tick engine; emits `bt_blueprint` (re-broadcast every ~3s for late joiners) +
+      `bt_delta` on every status change.
+- [x] `--bt` flag in [main.py](backend/ros_monitor_bridge/main.py) +
+      [config.py](backend/ros_monitor_bridge/config.py); runs alongside ROS or sim.
+- [x] Verified over WS: blueprint + steady delta stream, all four states, FAILURE
+      propagates up the tree.
 
-### Phase 1 — Vanilla prototype (`frontend/bt_proto.html` + `bt_proto.js`)
-- [ ] WS client: handshake `bt_blueprint` → build node map; `bt_delta` → patch status.
-- [ ] Top-to-bottom layout (d3-hierarchy or layered grid) with decorator caps +
-      in-block services.
-- [ ] Orthogonal wire routing (`M..V..H..V`), no diagonals.
-- [ ] Direct color mutation per state; flowing-wire animation on RUNNING; green/red
-      flash (~150ms) on SUCCESS/FAILURE.
-- [ ] **Gate:** layout + live binding look right before touching React.
+### Phase 1 — Vanilla prototype ✅ DONE (visually approved)
+- [x] [bt_proto.html](frontend/bt_proto.html) + [bt_proto.js](frontend/js/bt_proto.js):
+      WS client, hand-rolled tidy-tree layout (no d3 dep), decorator caps + in-block
+      services, orthogonal `M..V..H..V` wires, RUNNING flow + 150ms SUCCESS/FAILURE
+      flash, pan/zoom. Approved by user.
 
-### Phase 2 — Production SPA shell (`frontend_new/`)
-- [ ] Add hash `router.tsx` + `AppShell` + `NavSidebar` (Home / ROS Introspection /
-      Behavior Tree / Logging / Settings — nav list trivially extensible), dark theme
-      reusing existing Tailwind tokens & CSS vars.
-- [ ] Move the current [App.tsx](frontend_new/src/App.tsx) body **verbatim** into
-      `views/RosIntrospection.tsx`; `App.tsx` becomes ThemeProvider + Router.
-- [ ] Home + Logs styled placeholders.
-- [ ] **Audit `SceneManager.dispose()`** for full teardown (rAF cancel, context loss,
-      geometry/material disposal, WS close); fix gaps. Verify GPU memory is released on
-      nav-away (DevTools → no growing WebGL contexts after repeated nav).
+### Phase 2 — Production SPA shell ✅ DONE (visually approved)
+- [x] [router.tsx](frontend_new/src/router.tsx) (hash router + ROUTES registry) +
+      [AppShell.tsx](frontend_new/src/components/AppShell.tsx) +
+      [NavSidebar.tsx](frontend_new/src/components/NavSidebar.tsx) — Home / ROS
+      Introspection / Behavior Tree / Logging / Settings, collapsible, theme-aware.
+- [x] Moved App.tsx body **verbatim** into
+      [RosIntrospection.tsx](frontend_new/src/views/RosIntrospection.tsx); App.tsx is
+      now ThemeProvider + AppShell. Docked panels switched `fixed`→`absolute` to live
+      in the content area; cursor menus/modals stay `fixed`.
+- [x] Home / BehaviorTree / Logging / Settings styled placeholders (shared
+      [PagePlaceholder.tsx](frontend_new/src/components/PagePlaceholder.tsx)).
+- [x] **Hardened `SceneManager.dispose()`**: added geometry/material/**texture**
+      disposal (sprite label + Hz-badge textures were leaking), `controls.dispose()`,
+      `composer.dispose()`, `forceContextLoss()`. WS already closes via `useRosGraph`
+      cleanup; scene disposes via `useThreeScene` cleanup — both now fire on nav-away.
+- [x] **Gate:** routing + 3D view verified working, no crashes. Fixed two crashes en
+      route: cross-instance outline-material cache disposal, and the sim emitting
+      services without a `clients[]` array ([simulation.py](backend/ros_monitor_bridge/simulation.py)).
 
 ### Phase 3 — BT integration in React (`frontend_new/`)
 - [ ] Add `zustand`; implement `store/btStore.ts` + `hooks/useBtSocket.ts`.

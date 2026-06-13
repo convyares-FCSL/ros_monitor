@@ -32,7 +32,7 @@ export function Header({ status, graph, bandwidth, onOpenSettings, onResetSettin
   const [themeOpen, setThemeOpen] = useState(false);
 
   return (
-    <header className="fixed top-0 left-0 right-0 h-14 z-30 flex items-center justify-between px-5
+    <header className="absolute top-0 left-0 right-0 h-14 z-30 flex items-center justify-between px-5
       backdrop-blur-xl border-b border-white/[0.07]"
       style={{ background: 'var(--menu-bg)', color: 'var(--menu-text)' }}>
 
