@@ -26,7 +26,7 @@ export function ControlsOverlay({
   const { theme } = useTheme();
 
   return (
-    <div className={`fixed left-3 bottom-3 z-30 flex flex-col gap-2 w-72 p-3 backdrop-blur-2xl rounded-2xl
+    <div className={`absolute left-3 bottom-3 z-30 flex flex-col gap-2 w-72 p-3 backdrop-blur-2xl rounded-2xl
       transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
       ${open ? 'translate-x-0' : '-translate-x-[calc(100%+12px)]'}`}
       style={{ background: 'var(--menu-bg)', border: `1px solid ${theme.panelBorder}` }}>
