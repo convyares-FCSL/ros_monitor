@@ -169,16 +169,29 @@ _NODES = [
 _NODE_BY_ID = {n["id"]: n for n in _NODES}
 
 
-def blueprint_event(now):
-    """The one-time (re-emitted) structure handshake."""
+class TreeSpec:
+    """A demo tree the emitter can run: structure + per-cycle leaf behaviour."""
+
+    def __init__(self, tree_id, version, root_id, nodes, make_leaves, blackboard_fn=None):
+        self.tree_id = tree_id
+        self.version = version
+        self.root_id = root_id
+        self.nodes = nodes
+        self.nodes_by_id = {n["id"]: n for n in nodes}
+        self.make_leaves = make_leaves
+        self.blackboard_fn = blackboard_fn
+
+
+def blueprint_event(spec, now):
+    """The one-time (re-emitted) structure handshake for one tree."""
     return {
         "type": "bt_blueprint",
         "timestamp": now,
         "data": {
-            "tree_id": _TREE_ID,
-            "version": BLUEPRINT_VERSION,
-            "root_id": _ROOT_ID,
-            "nodes": _NODES,
+            "tree_id": spec.tree_id,
+            "version": spec.version,
+            "root_id": spec.root_id,
+            "nodes": spec.nodes,
         },
     }
 
@@ -223,32 +236,16 @@ class BTEngine:
     delta only when a node's status actually changes.
     """
 
-    def __init__(self, on_delta):
+    def __init__(self, nodes_by_id, root_id, make_leaves, on_delta):
+        self._nodes = nodes_by_id
+        self._root_id = root_id
+        self._make_leaves = make_leaves
         self._on_delta = on_delta
-        self._status = {n["id"]: IDLE for n in _NODES}
+        self._status = {nid: IDLE for nid in nodes_by_id}
         # Per-control-node child cursor for "with memory" sequences/fallbacks.
         self._cursor = {}
         self._cycle = 0
-        self._leaves = self._build_leaves()
-
-    def _build_leaves(self):
-        cyc = self._cycle
-        # Vehicle shows up after the guard settles; one cycle in three has a
-        # transient pressure failure to exercise the FAILURE flash + recovery.
-        vehicle_present = SUCCESS
-        pressure_ok = FAILURE if (cyc % 3 == 2) else SUCCESS
-        return {
-            2: _Leaf(0, SUCCESS),               # IsEmergencyClear
-            3: _Leaf(2, SUCCESS),               # EnterSafeState (only if guard trips)
-            11: _Leaf(0, vehicle_present),      # IsVehiclePresent
-            12: _Leaf(3, SUCCESS),              # Authenticate
-            13: _Leaf(4, SUCCESS),              # Precool
-            15: _Leaf(0, pressure_ok),          # IsPressureNominal
-            16: _Leaf(6, SUCCESS),              # Dispense
-            17: _Leaf(1, FAILURE),              # FinalizeReceipt (Inverter -> SUCCESS)
-            22: _Leaf(2, SUCCESS),              # PublishMetrics
-            23: _Leaf(1, SUCCESS),              # RecordSession
-        }
+        self._leaves = make_leaves(0)
 
     # -- status bookkeeping --
     def _set(self, node_id, status):
@@ -257,7 +254,7 @@ class BTEngine:
             self._on_delta(node_id, status)
 
     def _reset_subtree(self, node_id):
-        node = _NODE_BY_ID[node_id]
+        node = self._nodes[node_id]
         self._set(node_id, IDLE)
         if node_id in self._leaves:
             self._leaves[node_id].reset()
@@ -266,7 +263,7 @@ class BTEngine:
 
     # -- tick dispatch --
     def _tick(self, node_id):
-        node = _NODE_BY_ID[node_id]
+        node = self._nodes[node_id]
         ntype = node["type"]
         if not node["children"]:                       # leaf
             status = self._leaves[node_id].tick()
@@ -349,22 +346,110 @@ class BTEngine:
         return RUNNING
 
     def tick_root(self):
-        status = self._tick(_ROOT_ID)
+        status = self._tick(self._root_id)
         if status in (SUCCESS, FAILURE):
             # Cycle finished: reset everything to IDLE and rescript for variety.
             self._cycle += 1
-            self._leaves = self._build_leaves()
+            self._leaves = self._make_leaves(self._cycle)
             self._cursor.clear()
-            self._reset_subtree(_ROOT_ID)
+            self._reset_subtree(self._root_id)
         return status
 
 
-class BTSimulation:
-    """Background thread: ticks the engine and emits blueprint + deltas."""
+# --- Tree 1: hydrogen dispenser (leaf behaviour + blackboard) ---------------
+def _hydrogen_leaves(cycle):
+    # Vehicle shows up after the guard settles; one cycle in three has a
+    # transient pressure failure to exercise the FAILURE flash + recovery.
+    pressure_ok = FAILURE if (cycle % 3 == 2) else SUCCESS
+    return {
+        2: _Leaf(0, SUCCESS),    # IsEmergencyClear
+        3: _Leaf(2, SUCCESS),    # EnterSafeState (only if guard trips)
+        11: _Leaf(0, SUCCESS),   # IsVehiclePresent
+        12: _Leaf(3, SUCCESS),   # Authenticate
+        13: _Leaf(4, SUCCESS),   # Precool
+        15: _Leaf(0, pressure_ok),  # IsPressureNominal
+        16: _Leaf(6, SUCCESS),   # Dispense
+        17: _Leaf(1, FAILURE),   # FinalizeReceipt (Inverter -> SUCCESS)
+        22: _Leaf(2, SUCCESS),   # PublishMetrics
+        23: _Leaf(1, SUCCESS),   # RecordSession
+    }
 
-    def __init__(self, runtime, logger):
+
+def _hydrogen_blackboard(t):
+    return {
+        "estop_state": "CLEAR",
+        "safe_state_ack": False,
+        "bay_id": "BAY-03",
+        "vehicle_id": "HGV-4471",
+        "session_token": f"SES-{int(t // 12) % 1000:03d}",
+        "precool_target": -40.0,
+        "nozzle_temp": round(-40 + 8 * math.sin(t * 0.3), 1),
+        "pressure_limit": 700,
+        "fill_target": 6.2,
+        "dispensed": round((t % 12) / 12 * 6.2, 2),
+        "metrics_topic": "/dispenser/metrics",
+        "record_id": 1000 + int(t // 12),
+    }
+
+
+# --- Tree 2: battery pack charger (a second, smaller tree) -------------------
+_CHARGE_NODES = [
+    {"id": 200, "name": "ChargeManager", "type": "Sequence", "category": "control",
+     "children": [201, 202], "decorators": [], "services": [], "ports": {}},
+    {"id": 201, "name": "IsConnected", "type": "Condition", "category": "condition",
+     "children": [], "decorators": [], "services": [],
+     "ports": {"input": {"port": "{charger_port}"}}},
+    {"id": 202, "name": "ChargeCycle", "type": "Sequence", "category": "control",
+     "children": [203, 204, 205], "decorators": [], "services": [], "ports": {}},
+    {"id": 203, "name": "IsTempSafe", "type": "Condition", "category": "condition",
+     "children": [], "decorators": [],
+     "services": [{"id": 231, "name": "ReadTemp", "tick_ms": 100}],
+     "ports": {"input": {"max_c": "{temp_limit}"}}},
+    {"id": 204, "name": "RampCurrent", "type": "Action", "category": "action",
+     "children": [],
+     "decorators": [{"id": 241, "name": "Timeout", "type": "Timeout", "ports": {"msec": 60000}}],
+     "services": [{"id": 242, "name": "MonitorCurrent", "tick_ms": 50}],
+     "ports": {"input": {"target_a": "{charge_current}"}, "output": {"soc": "{state_of_charge}"}}},
+    {"id": 205, "name": "HoldVoltage", "type": "Action", "category": "action",
+     "children": [], "decorators": [], "services": [],
+     "ports": {"input": {"target_v": "{pack_voltage}"}}},
+]
+
+
+def _charge_leaves(cycle):
+    temp_ok = FAILURE if (cycle % 5 == 4) else SUCCESS   # occasional thermal trip
+    return {
+        201: _Leaf(0, SUCCESS),    # IsConnected
+        203: _Leaf(0, temp_ok),    # IsTempSafe
+        204: _Leaf(5, SUCCESS),    # RampCurrent
+        205: _Leaf(3, SUCCESS),    # HoldVoltage
+    }
+
+
+def _charge_blackboard(t):
+    return {
+        "charger_port": "DC-FAST-2",
+        "temp_limit": 45,
+        "charge_current": 32.0,
+        "state_of_charge": round((t % 20) / 20 * 100, 1),
+        "pack_voltage": round(360 + 40 * (t % 20) / 20, 1),
+    }
+
+
+HYDROGEN_SPEC = TreeSpec(_TREE_ID, BLUEPRINT_VERSION, _ROOT_ID, _NODES,
+                         _hydrogen_leaves, _hydrogen_blackboard)
+CHARGE_SPEC = TreeSpec("PackCharger", 1, 200, _CHARGE_NODES,
+                       _charge_leaves, _charge_blackboard)
+_DEFAULT_SPECS = [HYDROGEN_SPEC, CHARGE_SPEC]
+
+
+class BTSimulation:
+    """Background thread: ticks one or more demo trees and emits their events."""
+
+    def __init__(self, runtime, logger, specs=None):
         self.runtime = runtime
         self.logger = logger
+        self.specs = specs if specs is not None else _DEFAULT_SPECS
         self._thread = None
         self._running = False
 
@@ -372,57 +457,48 @@ class BTSimulation:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        self.logger.info("Behavior Tree simulation thread started.")
+        names = ", ".join(s.tree_id for s in self.specs)
+        self.logger.info(f"Behavior Tree simulation thread started ({names}).")
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
 
-    def _emit_delta(self, node_id, status):
-        self.runtime.dispatch_event({
-            "type": "bt_delta",
-            "timestamp": time.time(),
-            "data": {"id": node_id, "state": status},
-        })
-
-    def _emit_blackboard(self, now, start):
-        # Live-looking values for the keys the demo tree's ports remap.
-        t = now - start
-        return {
-            "type": "bt_blackboard",
-            "timestamp": now,
-            "data": {
-                "scope": _TREE_ID,
-                "vars": {
-                    "estop_state": "CLEAR",
-                    "safe_state_ack": False,
-                    "bay_id": "BAY-03",
-                    "vehicle_id": "HGV-4471",
-                    "session_token": f"SES-{int(t // 12) % 1000:03d}",
-                    "precool_target": -40.0,
-                    "nozzle_temp": round(-40 + 8 * math.sin(t * 0.3), 1),
-                    "pressure_limit": 700,
-                    "fill_target": 6.2,
-                    "dispensed": round((t % 12) / 12 * 6.2, 2),
-                    "metrics_topic": "/dispenser/metrics",
-                    "record_id": 1000 + int(t // 12),
-                },
-            },
-        }
+    def _emit_delta(self, tree_id):
+        def emit(node_id, status):
+            self.runtime.dispatch_event({
+                "type": "bt_delta",
+                "timestamp": time.time(),
+                "data": {"tree_id": tree_id, "id": node_id, "state": status},
+            })
+        return emit
 
     def _loop(self):
-        engine = BTEngine(self._emit_delta)
+        engines = [
+            (spec, BTEngine(spec.nodes_by_id, spec.root_id, spec.make_leaves,
+                            self._emit_delta(spec.tree_id)))
+            for spec in self.specs
+        ]
         start = time.time()
         last_blueprint = 0.0
         last_blackboard = 0.0
         while self._running:
             now = time.time()
             if now - last_blueprint >= BLUEPRINT_REEMIT_S:
-                self.runtime.dispatch_event(blueprint_event(now))
+                for spec, _ in engines:
+                    self.runtime.dispatch_event(blueprint_event(spec, now))
                 last_blueprint = now
             if now - last_blackboard >= BLACKBOARD_EMIT_S:
-                self.runtime.dispatch_event(self._emit_blackboard(now, start))
+                for spec, _ in engines:
+                    if spec.blackboard_fn:
+                        self.runtime.dispatch_event({
+                            "type": "bt_blackboard",
+                            "timestamp": now,
+                            "data": {"tree_id": spec.tree_id, "scope": spec.tree_id,
+                                     "vars": spec.blackboard_fn(now - start)},
+                        })
                 last_blackboard = now
-            engine.tick_root()
+            for _, engine in engines:
+                engine.tick_root()
             time.sleep(TICK_PERIOD_S)

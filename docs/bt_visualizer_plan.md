@@ -9,9 +9,9 @@
 ## Context
 
 The repo is a working ROS 2 3D network visualizer: a Python `rclpy` + `websockets`
-bridge ([backend/ros_monitor_bridge/](backend/ros_monitor_bridge/)) that serves two
-frontends — a vanilla JS reference ([frontend/](frontend/)) and a production React 18
-+ TS + Vite + Tailwind app ([frontend_new/](frontend_new/)). Both share one WebSocket
+bridge ([backend/ros_monitor_bridge/](../backend/ros_monitor_bridge/)) that serves two
+frontends — a vanilla JS reference ([frontend/](../frontend/)) and a production React 18
++ TS + Vite + Tailwind app ([frontend_new/](../frontend_new/)). Both share one WebSocket
 event contract on port `8765`; static files are served on `7260`.
 
 We want a custom Behavior Tree (BT) visualizer (BehaviorTree.CPP v4 semantics) added
@@ -24,14 +24,14 @@ restructures the React app, then ports the proven prototype in.
 1. **There is no C++ / BT.CPP / ZeroMQ / Groot source anywhere in the repo.** The
    `PublisherZMQ` question is therefore moot — there is nothing to enable it *in*.
    The existing "simulation" is the Python `SimulatedBridge`
-   ([simulation.py](backend/ros_monitor_bridge/simulation.py)), not a C++ Groot
+   ([simulation.py](../backend/ros_monitor_bridge/simulation.py)), not a C++ Groot
    publisher. **We must create the BT data source.** See "BT data source" below for
    the two options and the recommendation.
 2. **`frontend_new/` is already a TS-native rewrite, not a thin shell.** The 3D view
-   is fully implemented in TypeScript ([three/SceneManager.ts](frontend_new/src/three/SceneManager.ts),
-   [hooks/useThreeScene.ts](frontend_new/src/hooks/useThreeScene.ts)), and WebGL
+   is fully implemented in TypeScript ([three/SceneManager.ts](../frontend_new/src/three/SceneManager.ts),
+   [hooks/useThreeScene.ts](../frontend_new/src/hooks/useThreeScene.ts)), and WebGL
    disposal already exists (`manager.dispose()` in the `useThreeScene` cleanup). The
-   app is single-page (no router, no Zustand — see [package.json](frontend_new/package.json)).
+   app is single-page (no router, no Zustand — see [package.json](../frontend_new/package.json)).
    So Phase 2 is **"wrap the working 3D view in a router + sidebar,"** not "port the
    vanilla `graph.js`." The vanilla port the prompt imagined is unnecessary.
 
@@ -41,7 +41,7 @@ restructures the React app, then ports the proven prototype in.
 
 The contract (event types + JSON schema below) is designed once and is **source-agnostic**.
 Anything that calls `runtime.dispatch_event({...})` reaches every connected browser
-through the existing single broadcaster in [server.py](backend/ros_monitor_bridge/server.py)
+through the existing single broadcaster in [server.py](../backend/ros_monitor_bridge/server.py)
 (`websocket_broadcaster`). No second WebSocket server is needed — the prompt's "stream
 over the existing WebSocket" maps cleanly onto `runtime.dispatch_event()`.
 
@@ -204,7 +204,7 @@ All events keep the established `{ type, timestamp, data }` envelope. Two new ty
   Layout geometry lives in `useMemo` keyed by blueprint+collapsedSet, untouched by
   deltas.
 - **Why a separate store:** the existing RosIntrospection view uses local `useState`
-  + `Map`s in [App.tsx](frontend_new/src/App.tsx) and works — we do **not** rewrite it.
+  + `Map`s in [App.tsx](../frontend_new/src/App.tsx) and works — we do **not** rewrite it.
   BT's high-frequency, normalized, per-node updates are a textbook Zustand fit and
   stay isolated from the 3D view's state.
 - **Local component state** stays for pure view concerns: pan/zoom transform, inspector
@@ -215,7 +215,7 @@ All events keep the established `{ type, timestamp, data }` envelope. Two new ty
 ## 5. WebGL mount / unmount / cleanup (router safety)
 
 The disposal already exists; routing makes it actually fire. In
-[useThreeScene.ts](frontend_new/src/hooks/useThreeScene.ts) the init `useEffect`
+[useThreeScene.ts](../frontend_new/src/hooks/useThreeScene.ts) the init `useEffect`
 returns `() => { manager.dispose(); managerRef.current = null; }`. Today the scene is
 always mounted, so that path rarely runs. Under the router:
 
@@ -240,59 +240,93 @@ always mounted, so that path rarely runs. Under the router:
 - [x] **[Option A]** `bt_simulation.py`: hydrogen-dispenser demo tree + BT.CPP-v4-style
       tick engine; emits `bt_blueprint` (re-broadcast every ~3s for late joiners) +
       `bt_delta` on every status change.
-- [x] `--bt` flag in [main.py](backend/ros_monitor_bridge/main.py) +
-      [config.py](backend/ros_monitor_bridge/config.py); runs alongside ROS or sim.
+- [x] `--bt` flag in [main.py](../backend/ros_monitor_bridge/main.py) +
+      [config.py](../backend/ros_monitor_bridge/config.py); runs alongside ROS or sim.
 - [x] Verified over WS: blueprint + steady delta stream, all four states, FAILURE
       propagates up the tree.
 
 ### Phase 1 — Vanilla prototype ✅ DONE (visually approved)
-- [x] [bt_proto.html](frontend/bt_proto.html) + [bt_proto.js](frontend/js/bt_proto.js):
+- [x] [bt_proto.html](../frontend/bt_proto.html) + [bt_proto.js](../frontend/js/bt_proto.js):
       WS client, hand-rolled tidy-tree layout (no d3 dep), decorator caps + in-block
       services, orthogonal `M..V..H..V` wires, RUNNING flow + 150ms SUCCESS/FAILURE
       flash, pan/zoom. Approved by user.
 
 ### Phase 2 — Production SPA shell ✅ DONE (visually approved)
-- [x] [router.tsx](frontend_new/src/router.tsx) (hash router + ROUTES registry) +
-      [AppShell.tsx](frontend_new/src/components/AppShell.tsx) +
-      [NavSidebar.tsx](frontend_new/src/components/NavSidebar.tsx) — Home / ROS
+- [x] [router.tsx](../frontend_new/src/router.tsx) (hash router + ROUTES registry) +
+      [AppShell.tsx](../frontend_new/src/components/AppShell.tsx) +
+      [NavSidebar.tsx](../frontend_new/src/components/NavSidebar.tsx) — Home / ROS
       Introspection / Behavior Tree / Logging / Settings, collapsible, theme-aware.
 - [x] Moved App.tsx body **verbatim** into
-      [RosIntrospection.tsx](frontend_new/src/views/RosIntrospection.tsx); App.tsx is
+      [RosIntrospection.tsx](../frontend_new/src/views/RosIntrospection.tsx); App.tsx is
       now ThemeProvider + AppShell. Docked panels switched `fixed`→`absolute` to live
       in the content area; cursor menus/modals stay `fixed`.
 - [x] Home / BehaviorTree / Logging / Settings styled placeholders (shared
-      [PagePlaceholder.tsx](frontend_new/src/components/PagePlaceholder.tsx)).
+      [PagePlaceholder.tsx](../frontend_new/src/components/PagePlaceholder.tsx)).
 - [x] **Hardened `SceneManager.dispose()`**: added geometry/material/**texture**
       disposal (sprite label + Hz-badge textures were leaking), `controls.dispose()`,
       `composer.dispose()`, `forceContextLoss()`. WS already closes via `useRosGraph`
       cleanup; scene disposes via `useThreeScene` cleanup — both now fire on nav-away.
 - [x] **Gate:** routing + 3D view verified working, no crashes. Fixed two crashes en
       route: cross-instance outline-material cache disposal, and the sim emitting
-      services without a `clients[]` array ([simulation.py](backend/ros_monitor_bridge/simulation.py)).
+      services without a `clients[]` array ([simulation.py](../backend/ros_monitor_bridge/simulation.py)).
 
 ### Phase 3 — BT integration in React ✅ DONE (awaiting visual gate)
-- [x] Added `zustand`; [store/btStore.ts](frontend_new/src/store/btStore.ts) +
-      [hooks/useBtSocket.ts](frontend_new/src/hooks/useBtSocket.ts).
-- [x] [bt/layout.ts](frontend_new/src/bt/layout.ts) (ported tidy-tree + orthogonal
-      math), [BTCanvas](frontend_new/src/bt/BTCanvas.tsx) (pan/zoom + SVG wires) /
-      [BTNode](frontend_new/src/bt/BTNode.tsx) (caps + services + core) — HTML divs
+- [x] Added `zustand`; [store/btStore.ts](../frontend_new/src/store/btStore.ts) +
+      [hooks/useBtSocket.ts](../frontend_new/src/hooks/useBtSocket.ts).
+- [x] [bt/layout.ts](../frontend_new/src/bt/layout.ts) (ported tidy-tree + orthogonal
+      math), [BTCanvas](../frontend_new/src/bt/BTCanvas.tsx) (pan/zoom + SVG wires) /
+      [BTNode](../frontend_new/src/bt/BTNode.tsx) (caps + services + core) — HTML divs
       Tailwind-themed over an SVG wire layer; CSS states in index.css.
 - [x] Per-node selector subscriptions (`useBtStore(s => s.statusById[id])`) so a
       delta repaints only the affected node + its incoming wire.
-- [x] [BTInspector](frontend_new/src/bt/BTInspector.tsx): port remappings + live
+- [x] [BTInspector](../frontend_new/src/bt/BTInspector.tsx): port remappings + live
       blackboard table with change-flash; collapse/expand subtrees. (Sparkline not
       chosen.) Emitter now sends `bt_blackboard`.
-- [x] **[Option B]** [btros_bridge.py](backend/ros_monitor_bridge/btros_bridge.py):
+- [x] **[Option B]** [btros_bridge.py](../backend/ros_monitor_bridge/btros_bridge.py):
       Groot2 **v4** ZMQ_REQ client — FULLTREE→blueprint (XML `_uid` mapping, decorator
       folding, subtree inlining, TreeNodesModel port directions), STATUS poll→deltas.
       `--btros HOST[:PORT]` flag. Parser + protocol framing tested offline
-      ([test_btros_parse.py](backend/test_btros_parse.py)). **Needs a live
+      ([test_btros_parse.py](../backend/test_btros_parse.py)). **Needs a live
       mserve/hyfleet executor to validate the ZMQ runtime path + LE assumption.**
 
 ### Phase 3 — Gate
 - [ ] Visually verify the Behavior Tree page (sim): tree renders, RUNNING path flows,
       states animate, click-to-inspect shows ports + live blackboard, collapse works.
-- [ ] Validate Option B against a running Groot2 v4 executor: `--btros HOST:PORT`.
+- [x] **Option B VALIDATED end-to-end** against a real BehaviorTree.CPP v4 Groot2
+      publisher ([bt_demo/](../bt_demo/), built against `/opt/ros/jazzy` BT.CPP). The
+      bridge fetched `ChargeManager`, parsed the XML `_uid` map, folded the Timeout
+      decorator into a cap on RampCurrent, and streamed live deltas — protocol
+      framing, little-endian, and decorator folding all confirmed correct.
+
+### Phase 3.1 — Polish (from review feedback)
+- [x] **Wheel zoom** fixed (native non-passive listener now attaches reliably; the
+      stage is always mounted). **Node selection** fixed (pointer capture only after a
+      real drag, so a plain click reaches the node).
+- [x] **Multiple trees**: store keyed by `tree_id`; `bt_delta` / `bt_blackboard` carry
+      `tree_id`; a **tree selector** in the BT header switches the active tree. The sim
+      now runs **two** trees (HydrogenDispenser + PackCharger) to demonstrate it.
+- [x] **Shared header** across all pages: new [TopBar](../frontend_new/src/components/TopBar.tsx)
+      + [ThemeSwitcher](../frontend_new/src/components/ThemeSwitcher.tsx); ROS stats moved
+      into it ([Header.tsx](../frontend_new/src/components/Header.tsx) → `RosHeaderContent`),
+      BT header has the tree selector + connection, placeholders share it too.
+- [x] **Real demo** ([bt_demo/](../bt_demo/)): standalone C++ BT.CPP v4 + Groot2Publisher.
+
+### Phase 3.2 — Parity + run-mode clarity (from review feedback)
+- [x] **BT layout mirrors ROS** (2 left / 2 right): left = [TreeExplorer](../frontend_new/src/bt/TreeExplorer.tsx)
+      (all trees + clickable node list) over [BTControls](../frontend_new/src/bt/BTControls.tsx)
+      (recenter / pause / collapse-all / expand-all); right = [BTInspector](../frontend_new/src/bt/BTInspector.tsx)
+      (blackboard always-on + node inspector). Both sides collapsible.
+- [x] **Canvas controls**: [BTCanvas](../frontend_new/src/bt/BTCanvas.tsx) is `forwardRef`
+      with `recenter()` + `focusNode()`; explorer focuses nodes, controls recenter;
+      pause freezes the delta stream ([useBtSocket](../frontend_new/src/hooks/useBtSocket.ts)).
+- [x] **Standardized run modes** ([main.py](../backend/ros_monitor_bridge/main.py)):
+      `--sim` (NO ROS), `--insp` (introspection demo), `--bt` (BT demo),
+      `--btros` (BT real). Startup RUN MODE banner + a `bridge_mode` event →
+      INSP / BT chips in the shared [TopBar](../frontend_new/src/components/TopBar.tsx)
+      ([uiStore](../frontend_new/src/store/uiStore.ts)). Documented in README.
+- [x] **Code-split**: route views lazy-loaded; initial bundle 855 kB → 158 kB
+      (Three.js isolated to the ROS chunk). Right panel split into blackboard +
+      node inspector; both BT and ROS panels collapsible.
 
 ---
 

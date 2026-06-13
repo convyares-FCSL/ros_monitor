@@ -7,6 +7,7 @@ import {
   generateGraphUpdate, generateFrequencyUpdate, generateMessageEvent,
   generateServiceInvoked, generateLifecycleEvent, generateNodeParams,
 } from '../simulation/rosSimulator';
+import { useUIStore, type BridgeMode } from '../store/uiStore';
 
 export interface RosGraphCallbacks {
   onGraphUpdate: (data: GraphUpdate) => void;
@@ -126,6 +127,9 @@ export function useRosGraph(opts: UseRosGraphOptions) {
             o2.onServiceInvoked(se);
             break;
           }
+          case 'bridge_mode':
+            useUIStore.getState().setBridgeMode(frame.data as unknown as BridgeMode);
+            break;
         }
       } catch { /* ignore malformed */ }
     };

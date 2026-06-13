@@ -1,5 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
-import { Header } from '../components/Header';
+import { Boxes } from 'lucide-react';
+import { RosHeaderContent } from '../components/Header';
+import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
 import { InspectorDrawer } from '../components/InspectorDrawer';
 import { ControlsOverlay } from '../components/ControlsOverlay';
@@ -415,7 +417,9 @@ export function RosIntrospection() {
     }}>
       <div ref={canvasRef} className="absolute inset-0 z-0" />
 
-      <Header status={status} graph={graph} bandwidth={bandwidth} onOpenSettings={() => setSettingsOpen(true)} onResetSettings={handleResetSettings} />
+      <TopBar title="ROS Introspection" icon={Boxes} onOpenSettings={() => setSettingsOpen(true)} onResetSettings={handleResetSettings}>
+        <RosHeaderContent status={status} graph={graph} bandwidth={bandwidth} />
+      </TopBar>
 
       <Sidebar
         open={sidebarOpen}
