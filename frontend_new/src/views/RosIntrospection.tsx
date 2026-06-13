@@ -5,7 +5,6 @@ import { TopBar } from '../components/TopBar';
 import { Sidebar } from '../components/Sidebar';
 import { InspectorDrawer } from '../components/InspectorDrawer';
 import { ControlsOverlay } from '../components/ControlsOverlay';
-import { SettingsModal } from '../components/SettingsModal';
 import { useRosGraph } from '../hooks/useRosGraph';
 import { useThreeScene } from '../hooks/useThreeScene';
 import { useTheme } from '../hooks/useTheme';
@@ -13,14 +12,12 @@ import type {
   GraphUpdate, MessageEvent, FrequencyUpdate, LifecycleEvent,
   NodeParamsEvent, ServiceInvokedEvent, ConnectionStatus,
   SelectedEntity, SelectedParticle, TopicHzState, NodeLifecycleState, DeadEndMode,
-  SceneSettings,
 } from '../types';
-import { DEFAULT_SCENE_SETTINGS } from '../types';
 import { isGenericNode, isGenericTopic, isGenericService, setGenericOverrides } from '../three/SceneManager';
+import { useSettingsStore } from '../store/settingsStore';
 
 const MAX_MESSAGES = 200;
 const MAX_SERVICE_CALLS = 100;
-const STALE_THRESHOLD_MS = 2000;
 
 // Generic status for a vertex id like "node:x" / "topic:/y" / "service:/z"
 function isGenericById(id: string): boolean {
@@ -36,7 +33,7 @@ function isGenericById(id: string): boolean {
 export function RosIntrospection() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const themeCtx = useTheme();
-  const { theme } = themeCtx;
+  const { theme, sceneSettings, resetScene } = themeCtx;
 
   // Connection
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
@@ -70,24 +67,11 @@ export function RosIntrospection() {
     } catch { /* corrupted storage — fall back to defaults */ }
     return new Map();
   });
-  const [deadEndMode, setDeadEndMode] = useState<DeadEndMode>('hidden');
+  const [deadEndMode, setDeadEndMode] = useState<DeadEndMode>(
+    () => useSettingsStore.getState().defaultDeadEndMode);
   const [isolatedSet, setIsolatedSet] = useState<Set<string> | null>(null);
   const [bandwidth, setBandwidth] = useState(0);
   const [sceneContextMenu, setSceneContextMenu] = useState<{ entity: SelectedEntity | null; x: number; y: number } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sceneSettings, setSceneSettings] = useState<SceneSettings>(() => {
-    try {
-      const saved = localStorage.getItem('ros3d-scene-settings');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Migrate old default sceneBg (#2e2f33) to new unified default (#0f172a).
-        if (parsed.sceneBg === '#2e2f33') delete parsed.sceneBg;
-        return { ...DEFAULT_SCENE_SETTINGS, ...parsed };
-      }
-    } catch { /* ignore */ }
-    return DEFAULT_SCENE_SETTINGS;
-  });
-
   // Bandwidth tracker
   const bwRef = useRef({ bytes: 0, lastReset: Date.now() });
   const handleBandwidth = useCallback((bytes: number) => {
@@ -112,7 +96,8 @@ export function RosIntrospection() {
         const next = new Map(prev);
         let changed = false;
         for (const [topic, state] of next) {
-          if (now - state.lastUpdate > STALE_THRESHOLD_MS && state.health !== 'stale') {
+          const staleMs = useSettingsStore.getState().stalenessThresholdSec * 1000;
+          if (now - state.lastUpdate > staleMs && state.health !== 'stale') {
             next.set(topic, { ...state, health: 'stale', hz: 0 });
             changed = true;
           }
@@ -271,43 +256,10 @@ export function RosIntrospection() {
     if (status === 'disconnected') clearScene();
   }, [status, clearScene]);
 
-  // Apply scene settings
+  // Apply scene settings (the active theme's appearance, edited on the Settings page)
   useEffect(() => {
     applySceneSettings(sceneSettings);
   }, [sceneSettings, applySceneSettings]);
-
-  // Derive settings for modal from current theme colors + persisted non-color settings
-  const settingsFromTheme = useMemo<SceneSettings>(() => ({
-    ...sceneSettings,
-    nodes: { color: theme.nodeColorHex, size: sceneSettings.nodes.size, emissive: theme.emissiveIntensity },
-    topics: { color: theme.topicColorHex, size: sceneSettings.topics.size, emissive: sceneSettings.topics.emissive },
-    services: { color: theme.serviceColorHex, size: sceneSettings.services.size, emissive: sceneSettings.services.emissive },
-    actions: { color: theme.actionColorHex, size: sceneSettings.actions.size, emissive: sceneSettings.actions.emissive },
-    sceneBg: theme.bg,
-  }), [theme, sceneSettings]);
-
-  const handleApplySettings = useCallback((s: SceneSettings) => {
-    setSceneSettings(s);
-    localStorage.setItem('ros3d-scene-settings', JSON.stringify(s));
-    setSettingsOpen(false);
-
-    // Sync scene settings into the custom theme
-    themeCtx.setCustomColors({
-      menuBg: s.menuBg,
-      sceneBg: s.sceneBg,
-      node: s.nodes.color,
-      topic: s.topics.color,
-      service: s.services.color,
-      action: s.actions.color,
-      emissive: s.nodes.emissive,
-    });
-    themeCtx.setThemeId('custom');
-  }, [themeCtx]);
-
-  const handleResetSettings = useCallback(() => {
-    setSceneSettings(DEFAULT_SCENE_SETTINGS);
-    localStorage.removeItem('ros3d-scene-settings');
-  }, []);
 
   // Visibility handlers
   const toggleItem = useCallback((id: string) => {
@@ -407,18 +359,25 @@ export function RosIntrospection() {
     setSelectedParticle(null);
   }, [releaseParticles]);
 
+  // Panel foreground for this view: an explicit black/white label choice wins,
+  // otherwise follow the active theme (so light themes get dark panel text).
+  const fgRgb = sceneSettings.labelColor === 'black' ? '0 0 0'
+    : sceneSettings.labelColor === 'white' ? '255 255 255'
+      : theme.fgRgb;
+
   return (
     <div className="absolute inset-0 overflow-hidden" style={{
       background: sceneSettings.sceneBg || theme.bg,
       ['--menu-bg' as string]: `${sceneSettings.menuBg}e0`,
       ['--menu-bg-solid' as string]: sceneSettings.menuBg,
-      ['--menu-text' as string]: sceneSettings.labelColor === 'black' ? '#000000' : '#ffffff',
-      ['--menu-text-muted' as string]: sceneSettings.labelColor === 'black' ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)',
-      ['--menu-text-dim' as string]: sceneSettings.labelColor === 'black' ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)',
+      ['--fg-rgb' as string]: fgRgb,
+      ['--menu-text' as string]: `rgb(${fgRgb})`,
+      ['--menu-text-muted' as string]: `rgb(${fgRgb} / 0.6)`,
+      ['--menu-text-dim' as string]: `rgb(${fgRgb} / 0.3)`,
     }}>
       <div ref={canvasRef} className="absolute inset-0 z-0" />
 
-      <TopBar title="ROS Introspection" icon={Boxes} onOpenSettings={() => setSettingsOpen(true)} onResetSettings={handleResetSettings}>
+      <TopBar title="ROS Introspection" icon={Boxes} onResetSettings={resetScene}>
         <RosHeaderContent status={status} graph={graph} bandwidth={bandwidth} />
       </TopBar>
 
@@ -471,7 +430,7 @@ export function RosIntrospection() {
       {sceneContextMenu && (
         <>
           <div className="fixed inset-0 z-50" onClick={() => setSceneContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setSceneContextMenu(null); }} />
-          <div className="fixed z-50 min-w-[160px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-white/[0.1] shadow-xl"
+          <div className="fixed z-50 min-w-[160px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.1)] shadow-xl"
             style={{ left: sceneContextMenu.x, top: sceneContextMenu.y, background: 'var(--menu-bg-solid)' }}>
             {sceneContextMenu.entity && (
               <>
@@ -504,20 +463,13 @@ export function RosIntrospection() {
           </div>
         </>
       )}
-      {/* Settings Modal */}
-      <SettingsModal
-        open={settingsOpen}
-        settings={settingsFromTheme}
-        onApply={handleApplySettings}
-        onCancel={() => setSettingsOpen(false)}
-      />
     </div>
   );
 }
 
 function SceneCtxItem({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-white/[0.06] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
+    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-[rgb(var(--fg-rgb)/0.06)] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
       {children}
     </button>
   );

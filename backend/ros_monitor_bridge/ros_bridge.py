@@ -28,6 +28,9 @@ except ImportError:
 
 _LIFECYCLE_TRANSITION_EVENT_TYPE = 'lifecycle_msgs/msg/TransitionEvent'
 
+# rcl_interfaces/msg/Log severity (uint8) → frontend log level.
+_LOG_LEVEL_MAP = {10: "debug", 20: "info", 30: "warn", 40: "error", 50: "fatal"}
+
 
 class TopicHzTracker:
     """Sliding time-window Hz estimator (count over span).
@@ -97,6 +100,7 @@ if ROS_AVAILABLE:
             self.hz_timer = self.create_timer(1.0, self.emit_frequency_update)
             self.logger.info("Initializing ROS 2 Bridge Node...")
             self.logger.info("ROS 2 graph query timer started (2s interval).")
+            self._subscribe_rosout()
 
         def update_graph_topology(self):
             with self.graph_lock:
@@ -221,9 +225,38 @@ if ROS_AVAILABLE:
                     }
                 )
 
+        def _subscribe_rosout(self):
+            # Dedicated subscription to the aggregated ROS log topic. Emits
+            # log_event rather than message_event; the generic subscription path
+            # skips /rosout so logs aren't double-reported.
+            try:
+                log_msg = get_message("rcl_interfaces/msg/Log")
+                self.create_subscription(log_msg, "/rosout", self.rosout_callback, 50)
+                self.logger.info("Subscribed to /rosout for log capture.")
+            except Exception as exc:
+                self.logger.warning(f"Could not subscribe to /rosout: {exc}")
+
+        def rosout_callback(self, msg):
+            self.runtime.dispatch_event(
+                {
+                    "type": "log_event",
+                    "timestamp": time.time(),
+                    "data": {
+                        "level": _LOG_LEVEL_MAP.get(msg.level, "info"),
+                        "name": msg.name,
+                        "msg": msg.msg,
+                        "file": msg.file,
+                        "function": msg.function,
+                        "line": msg.line,
+                    },
+                }
+            )
+
         def sync_topic_subscriptions(self, current_topics):
             target_topics = {}
             for topic in current_topics:
+                if topic["name"] == "/rosout":
+                    continue  # handled by the dedicated log_event subscription
                 if len(topic["types"]) > 1:
                     self.logger.warning(f"Topic {topic['name']} has multiple types {topic['types']}. Skipping dynamic subscription.")
                     continue

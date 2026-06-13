@@ -752,7 +752,10 @@ export class SceneManager {
     const activePortIds = new Set<string>();
 
     for (const svc of this.graph.services) {
-      if (svc.clients.length > 0 || isGenericService(svc.name)) continue;
+      // Connected services (clients > 0) get full vertices elsewhere. Every
+      // other service docks as an orbiting port — including built-in/generic
+      // ones, which are hidden per-frame unless un-hidden (see positions pass).
+      if (svc.clients.length > 0) continue;
       if (svc.servers.length === 0) continue;
 
       const svcId = svc.name;
@@ -1153,11 +1156,16 @@ export class SceneManager {
       mat.opacity = isSelected ? 0.9 : 0.35;
       mat.emissiveIntensity = isSelected ? 1.2 : 0.4;
 
-      // Inherit host visibility
+      // Visibility: inherit the host node, then apply the same hide rules the
+      // sidebar uses — type-hidden, item-hidden, or generic-hidden (built-in).
+      // isGenericService() honours per-item "Unmark Generic" overrides too.
       const hostV = this.vertices.get(port.hostId);
-      const hostVisible = hostV ? hostV.visible : true;
-      port.mesh.visible = hostVisible;
-      if (!hostVisible) port.label.visible = false;
+      let portVisible = hostV ? hostV.visible : true;
+      if (this.hiddenTypes.has('service')) portVisible = false;
+      if (this.hiddenItems.has(`service:${svcId}`)) portVisible = false;
+      if (this.genericHidden && isGenericService(svcId)) portVisible = false;
+      port.mesh.visible = portVisible;
+      if (!portVisible) port.label.visible = false;
     }
   }
 

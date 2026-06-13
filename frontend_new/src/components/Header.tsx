@@ -1,5 +1,6 @@
 import { Cpu, Radio, Server, Wrench, Wifi, WifiOff, Gauge } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
+import { Stat } from './StatChip';
 import type { ConnectionStatus, GraphUpdate } from '../types';
 
 interface RosHeaderContentProps {
@@ -43,23 +44,11 @@ export function RosHeaderContent({ status, graph, bandwidth }: RosHeaderContentP
         </div>
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08]">
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[rgb(var(--fg-rgb)/0.04)] border border-[rgb(var(--fg-rgb)/0.08)]">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot} ${status !== 'disconnected' ? 'animate-pulse' : ''}`} />
         <StatusIcon className={`w-3 h-3 ${cfg.text}`} />
         <span className={`text-[10px] font-bold tracking-widest ${cfg.text}`}>{cfg.label}</span>
       </div>
     </>
-  );
-}
-
-function Stat({ icon, label, value, colorHex }: { icon: React.ReactNode; label: string; value: number; colorHex: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span style={{ color: colorHex }} className="opacity-70">{icon}</span>
-      <div>
-        <div className="text-sm font-bold font-mono leading-none" style={{ color: colorHex }}>{value}</div>
-        <div className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: 'var(--menu-text-dim)' }}>{label}</div>
-      </div>
-    </div>
   );
 }

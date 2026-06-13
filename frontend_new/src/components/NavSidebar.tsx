@@ -27,11 +27,11 @@ export function NavSidebar({ activePath, onNavigate }: NavSidebarProps) {
         </div>
         {!collapsed && (
           <div className="overflow-hidden">
-            <div className="text-sm font-extrabold tracking-wide leading-none text-white whitespace-nowrap">
+            <div className="text-sm font-extrabold tracking-wide leading-none text-[color:rgb(var(--fg-rgb))] whitespace-nowrap">
               ROS<span style={{ color: theme.nodeColorHex }} className="font-light">.Control</span>
             </div>
             <div className="text-[9px] font-semibold tracking-widest uppercase leading-none mt-1 whitespace-nowrap"
-              style={{ color: 'rgba(255,255,255,0.45)' }}>
+              style={{ color: 'rgb(var(--fg-rgb) / 0.45)' }}>
               Diagnostic Platform
             </div>
           </div>
@@ -48,10 +48,10 @@ export function NavSidebar({ activePath, onNavigate }: NavSidebarProps) {
               key={r.path}
               onClick={() => onNavigate(r.path)}
               title={r.label}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${active ? '' : 'hover:bg-white/[0.04]'}`}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${active ? '' : 'hover:bg-[rgb(var(--fg-rgb)/0.04)]'}`}
               style={{
                 background: active ? `${theme.accentHex}1a` : 'transparent',
-                color: active ? '#fff' : 'rgba(255,255,255,0.6)',
+                color: active ? 'rgb(var(--fg-rgb))' : 'rgb(var(--fg-rgb) / 0.6)',
                 border: `1px solid ${active ? theme.accentHex + '40' : 'transparent'}`,
               }}
             >
@@ -66,7 +66,7 @@ export function NavSidebar({ activePath, onNavigate }: NavSidebarProps) {
       {/* Collapse toggle */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="h-10 flex items-center justify-center gap-2 border-t shrink-0 text-white/50 hover:text-white/80 transition-colors"
+        className="h-10 flex items-center justify-center gap-2 border-t shrink-0 text-[color:rgb(var(--fg-rgb)/0.5)] hover:text-[color:rgb(var(--fg-rgb)/0.8)] transition-colors"
         style={{ borderColor: theme.panelBorder }}
       >
         {collapsed ? <ChevronRight className="w-4 h-4" /> : (

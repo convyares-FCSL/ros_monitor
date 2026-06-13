@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { Workflow, ChevronDown, GitBranch, FileCode2, X, Copy, Check } from 'lucide-react';
+import { Workflow, ChevronDown, GitBranch, FileCode2, X, Copy, Check, Boxes, CircleDot, CheckCircle2, XCircle } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { useBtSocket, type BtConnStatus } from '../hooks/useBtSocket';
-import { useBtStore, useTreeIds, useActiveBlueprint, useActiveNodesById } from '../store/btStore';
+import { useBtStore, useTreeIds, useActiveBlueprint, useActiveNodesById, useActiveStatusCounts } from '../store/btStore';
 import type { BTBlueprint, BTNodeDef, BTDecorator } from '../bt/types';
 import { TopBar } from '../components/TopBar';
+import { Stat } from '../components/StatChip';
 import { BTCanvas, type BTCanvasHandle } from '../bt/BTCanvas';
 import { BTInspector } from '../bt/BTInspector';
 import { TreeExplorer } from '../bt/TreeExplorer';
@@ -44,7 +45,7 @@ export function BehaviorTree() {
       />
 
       <TopBar title="Behavior Tree" icon={Workflow}>
-        <TreeSelector />
+        <BtHeaderContent />
         <ConnBadge conn={conn} />
         <XmlDebugButton onOpen={() => setXmlOpen(true)} />
       </TopBar>
@@ -69,7 +70,7 @@ export function BehaviorTree() {
       <BTInspector />
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-4 px-4 py-2 rounded-xl backdrop-blur-2xl border text-[10px] font-mono text-white/55"
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-4 px-4 py-2 rounded-xl backdrop-blur-2xl border text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)]"
         style={{ background: 'var(--menu-bg, rgba(15,23,42,0.85))', borderColor: 'rgba(255,255,255,0.08)' }}>
         <Legend color="#475569" label="IDLE" />
         <Legend color="#06b6d4" label="RUNNING" />
@@ -81,7 +82,7 @@ export function BehaviorTree() {
         <>
           <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
           <div
-            className="fixed z-50 min-w-[170px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-white/[0.1] shadow-xl"
+            className="fixed z-50 min-w-[170px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.1)] shadow-xl"
             style={{ left: contextMenu.x, top: contextMenu.y, background: 'var(--menu-bg-solid)' }}
           >
             {contextNode ? (
@@ -131,39 +132,57 @@ export function BehaviorTree() {
   );
 }
 
+// Mirrors RosHeaderContent: a quick tree switcher plus a row of stat chips
+// (Trees / Nodes / live status) styled identically to the ROS Introspection top.
+function BtHeaderContent() {
+  const treeIds = useTreeIds();
+  const blueprint = useActiveBlueprint();
+  const counts = useActiveStatusCounts();
+  return (
+    <>
+      <TreeSelector />
+      <div className="hidden md:flex items-center gap-6">
+        <Stat icon={<GitBranch className="w-3.5 h-3.5" />} label="Trees" value={treeIds.length} colorHex="#a855f7" />
+        <Stat icon={<Boxes className="w-3.5 h-3.5" />} label="Nodes" value={blueprint?.nodes.length ?? 0} colorHex="#38bdf8" />
+        <Stat icon={<CircleDot className="w-3.5 h-3.5" />} label="Running" value={counts.running} colorHex="#06b6d4" />
+        <Stat icon={<CheckCircle2 className="w-3.5 h-3.5" />} label="Success" value={counts.success} colorHex="#10b981" />
+        <Stat icon={<XCircle className="w-3.5 h-3.5" />} label="Failure" value={counts.failure} colorHex="#ef4444" />
+      </div>
+    </>
+  );
+}
+
 // Quick tree switcher in the header (the explorer offers the full browse).
 function TreeSelector() {
   const treeIds = useTreeIds();
   const activeTreeId = useBtStore((s) => s.activeTreeId);
   const setActiveTree = useBtStore((s) => s.setActiveTree);
-  const blueprint = useActiveBlueprint();
   const [open, setOpen] = useState(false);
 
   if (treeIds.length === 0) {
-    return <span className="text-[11px] font-mono text-white/35">no tree loaded</span>;
+    return <span className="text-[11px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)]">no tree loaded</span>;
   }
 
   return (
     <div className="relative">
       <button onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition-all">
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[rgb(var(--fg-rgb)/0.04)] border border-[rgb(var(--fg-rgb)/0.08)] hover:bg-[rgb(var(--fg-rgb)/0.08)] transition-all">
         <GitBranch className="w-3.5 h-3.5 text-cyan-400" />
-        <span className="text-[12px] font-semibold text-white">{activeTreeId}</span>
-        {blueprint && <span className="text-[10px] font-mono text-white/40">{blueprint.nodes.length} nodes</span>}
-        {treeIds.length > 1 && <ChevronDown className="w-3.5 h-3.5 text-white/40" />}
+        <span className="text-[12px] font-semibold text-[color:rgb(var(--fg-rgb))]">{activeTreeId}</span>
+        {treeIds.length > 1 && <ChevronDown className="w-3.5 h-3.5 text-[color:rgb(var(--fg-rgb)/0.4)]" />}
       </button>
       {open && treeIds.length > 1 && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-2 z-50 min-w-[200px] py-1.5 rounded-lg backdrop-blur-xl border border-white/[0.1] shadow-xl"
+          <div className="absolute left-0 top-full mt-2 z-50 min-w-[200px] py-1.5 rounded-lg backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.1)] shadow-xl"
             style={{ background: 'var(--menu-bg-solid, rgba(15,23,42,0.95))' }}>
             {treeIds.map((id) => (
               <button key={id} onClick={() => { setActiveTree(id); setOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.05] transition-colors"
-                style={{ color: id === activeTreeId ? '#fff' : 'rgba(255,255,255,0.6)' }}>
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[rgb(var(--fg-rgb)/0.05)] transition-colors"
+                style={{ color: id === activeTreeId ? 'rgb(var(--fg-rgb))' : 'rgb(var(--fg-rgb) / 0.6)' }}>
                 <GitBranch className="w-3.5 h-3.5" style={{ color: id === activeTreeId ? '#06b6d4' : 'currentColor' }} />
                 <span className="text-[12px] font-semibold">{id}</span>
-                {id === activeTreeId && <span className="ml-auto text-[9px] text-white/35">active</span>}
+                {id === activeTreeId && <span className="ml-auto text-[9px] text-[color:rgb(var(--fg-rgb)/0.35)]">active</span>}
               </button>
             ))}
           </div>
@@ -176,9 +195,9 @@ function TreeSelector() {
 function ConnBadge({ conn }: { conn: BtConnStatus }) {
   const c = CONN_STYLE[conn];
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08]">
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[rgb(var(--fg-rgb)/0.04)] border border-[rgb(var(--fg-rgb)/0.08)]">
       <span className={`w-2 h-2 rounded-full ${c.cls} ${conn !== 'disconnected' ? 'animate-pulse' : ''}`} />
-      <span className="text-[10px] font-bold tracking-widest text-white/60">{c.label}</span>
+      <span className="text-[10px] font-bold tracking-widest text-[color:rgb(var(--fg-rgb)/0.6)]">{c.label}</span>
     </div>
   );
 }
@@ -194,7 +213,7 @@ function Legend({ color, label }: { color: string; label: string }) {
 
 function SceneCtxItem({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-white/[0.06] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
+    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-[rgb(var(--fg-rgb)/0.06)] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
       {children}
     </button>
   );
@@ -207,10 +226,10 @@ function XmlDebugButton({ onOpen }: { onOpen: () => void }) {
       onClick={onOpen}
       disabled={!blueprint}
       title="View tree XML"
-      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[rgb(var(--fg-rgb)/0.04)] border border-[rgb(var(--fg-rgb)/0.08)] hover:bg-[rgb(var(--fg-rgb)/0.08)] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
     >
       <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />
-      <span className="text-[11px] font-mono text-white/70">XML</span>
+      <span className="text-[11px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)]">XML</span>
     </button>
   );
 }
@@ -230,29 +249,29 @@ function XmlDebugModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-[700px] max-h-[80vh] rounded-2xl border border-white/[0.08] shadow-2xl flex flex-col overflow-hidden"
+      <div className="relative w-[700px] max-h-[80vh] rounded-2xl border border-[rgb(var(--fg-rgb)/0.08)] shadow-2xl flex flex-col overflow-hidden"
         style={{ background: 'var(--menu-bg-solid)' }}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.07] shrink-0">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[rgb(var(--fg-rgb)/0.07)] shrink-0">
           <div className="flex items-center gap-2">
             <FileCode2 className="w-4 h-4 text-cyan-400" />
-            <span className="text-sm font-bold tracking-widest uppercase text-white/80">Tree XML</span>
+            <span className="text-sm font-bold tracking-widest uppercase text-[color:rgb(var(--fg-rgb)/0.8)]">Tree XML</span>
             {blueprint && (
-              <span className="text-[10px] font-mono text-white/35 ml-2">{blueprint.tree_id} · {blueprint.nodes.length} nodes</span>
+              <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)] ml-2">{blueprint.tree_id} · {blueprint.nodes.length} nodes</span>
             )}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={handleCopy}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.05] border border-white/[0.08] hover:bg-white/[0.09] transition-all text-[11px] font-semibold text-white/60 hover:text-white">
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[rgb(var(--fg-rgb)/0.05)] border border-[rgb(var(--fg-rgb)/0.08)] hover:bg-[rgb(var(--fg-rgb)/0.09)] transition-all text-[11px] font-semibold text-[color:rgb(var(--fg-rgb)/0.6)] hover:text-[color:rgb(var(--fg-rgb))]">
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               {copied ? 'Copied' : 'Copy'}
             </button>
-            <button onClick={onClose} className="text-white/30 hover:text-white/70 transition-colors">
+            <button onClick={onClose} className="text-[color:rgb(var(--fg-rgb)/0.3)] hover:text-[color:rgb(var(--fg-rgb)/0.7)] transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
-          <pre className="text-[11px] font-mono text-white/75 whitespace-pre leading-relaxed">{xml}</pre>
+          <pre className="text-[11px] font-mono text-[color:rgb(var(--fg-rgb)/0.75)] whitespace-pre leading-relaxed">{xml}</pre>
         </div>
       </div>
     </div>

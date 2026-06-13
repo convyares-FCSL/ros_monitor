@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { WsFrame } from '../types';
+import { getWsUrl } from '../store/settingsStore';
 
 export type BridgeConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -13,8 +14,6 @@ type FrameListener = (envelope: BridgeEnvelope) => void;
 interface BridgeConnectionState {
   status: BridgeConnectionStatus;
 }
-
-const WS_URL = `ws://${window.location.hostname || 'localhost'}:8765`;
 
 const listeners = new Set<FrameListener>();
 let socket: WebSocket | null = null;
@@ -67,7 +66,7 @@ function connect() {
   }
 
   setStatus('connecting');
-  const ws = new WebSocket(WS_URL);
+  const ws = new WebSocket(getWsUrl());
   socket = ws;
 
   ws.onopen = () => {
@@ -122,6 +121,17 @@ export function stopBridgeConnection() {
     ws.close();
   }
   setStatus('disconnected');
+}
+
+// Tear down the current socket and reconnect using the latest settings
+// (e.g. after the endpoint changed on the Settings page).
+export function reconnectBridge() {
+  if (!running) {
+    startBridgeConnection();
+    return;
+  }
+  clearReconnectTimer();
+  connect();
 }
 
 export function subscribeToBridgeFrames(listener: FrameListener) {
