@@ -13,6 +13,7 @@ try:
     import rclpy
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from rclpy.serialization import serialize_message
     from rosidl_runtime_py.convert import message_to_ordereddict
     from rosidl_runtime_py.utilities import get_message
@@ -27,6 +28,15 @@ except ImportError:
     get_message = None
 
 _LIFECYCLE_TRANSITION_EVENT_TYPE = 'lifecycle_msgs/msg/TransitionEvent'
+
+# BEST_EFFORT lets us receive from any publisher regardless of its reliability
+# policy. Depth 10 is sufficient for a passive monitor.
+_MONITOR_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    durability=DurabilityPolicy.VOLATILE,
+) if ROS_AVAILABLE else None
 
 # rcl_interfaces/msg/Log severity (uint8) → frontend log level.
 _LOG_LEVEL_MAP = {10: "debug", 20: "info", 30: "warn", 40: "error", 50: "fatal"}
@@ -278,7 +288,7 @@ if ROS_AVAILABLE:
                 try:
                     msg_class = get_message(topic_type)
                     callback = self.make_subscription_callback(topic_name, topic_type)
-                    self.active_subscriptions[topic_name] = self.create_subscription(msg_class, topic_name, callback, 10)
+                    self.active_subscriptions[topic_name] = self.create_subscription(msg_class, topic_name, callback, _MONITOR_QOS)
                     self.logger.info(f"Successfully subscribed to: {topic_name} [{topic_type}]")
                 except Exception as exc:
                     self.logger.warning(f"Could not dynamically subscribe to {topic_name} of type {topic_type}: {exc}")
