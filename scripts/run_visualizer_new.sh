@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend_new"
 DIST_DIR="$FRONTEND_DIR/dist"
-ROS_SETUP="/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
+DETECT_ROS_SCRIPT="$ROOT_DIR/scripts/detect_ros.sh"
 ROS_DEMO_WS_SETUP="$ROOT_DIR/ros2_demo_ws/install/setup.bash"
 BT_DEMO_BIN="$ROOT_DIR/bt_demo/build/bt_demo"
 
@@ -211,11 +211,12 @@ if [[ "$SKIP_BUILD" == false || ! -d "$DIST_DIR" ]]; then
 fi
 
 require_ros() {
-  [[ -f "$ROS_SETUP" ]] || die "ROS setup file not found: $ROS_SETUP"
+  [[ -f "$DETECT_ROS_SCRIPT" ]] || die "detect_ros.sh not found: $DETECT_ROS_SCRIPT"
   set +u
   # shellcheck disable=SC1090
-  source "$ROS_SETUP"
+  source "$DETECT_ROS_SCRIPT"
   set -u
+  [[ -n "${ROS_DISTRO:-}" ]] || die "ROS 2 not found — is it installed in /opt/ros/?"
 }
 
 ensure_demo_workspace() {

@@ -10,7 +10,7 @@ The React frontend requires Node.js; the Python bridge requires ROS 2 Jazzy.
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
-  build-essential cmake git curl fuser \
+  build-essential cmake git curl psmisc inotify-tools \
   python3 python3-pip python3-venv
 ```
 
@@ -54,7 +54,8 @@ source /opt/ros/jazzy/setup.bash
 Verify:
 
 ```bash
-ros2 --version
+printenv ROS_DISTRO   # should print: jazzy
+ros2 pkg list | head -5
 ```
 
 ---
@@ -181,7 +182,52 @@ Open `http://localhost:7260` in a browser.
 
 ---
 
-## 10. Frontend development (hot reload)
+## 10. Auto-source ROS on login
+
+Add this to `~/.bashrc` so every new terminal picks up whichever ROS 2 distro is
+installed, without hardcoding `jazzy`:
+
+```bash
+# Auto-source ROS 2 (detects jazzy / iron / humble / rolling)
+source ~/Applications/ROS\ Monitor/ros_monitor/scripts/detect_ros.sh 2>/dev/null || true
+```
+
+Or for a plain installation under `~/ros_monitor`:
+
+```bash
+source ~/ros_monitor/scripts/detect_ros.sh 2>/dev/null || true
+```
+
+`detect_ros.sh` also sources any colcon overlay workspaces it finds under `$HOME`
+(up to 5 directories deep), so custom interface packages are available automatically.
+
+---
+
+## 11. Auto-restart on new workspace (watched launch)
+
+Use `run_with_watch.sh` instead of `run_visualizer_new.sh`. It watches `$HOME` via
+`inotifywait` and restarts the bridge automatically whenever a new colcon workspace
+is built (i.e. a new `install/setup.bash` appears):
+
+```bash
+./scripts/run_with_watch.sh --mode full
+./scripts/run_with_watch.sh --mode demo
+./scripts/run_with_watch.sh --mode sim
+```
+
+Restart flow when a new workspace is detected:
+
+1. `inotifywait` sees a new `install/setup.bash` under `$HOME`
+2. The bridge process is stopped cleanly (cleanup runs, ports are freed)
+3. `detect_ros.sh` re-runs to source the new workspace into the environment
+4. The bridge restarts and picks up the new message types
+
+Requires `inotify-tools` (installed in step 1). Falls back to a single run with
+a warning if `inotify-tools` is not present.
+
+---
+
+## 13. Frontend development (hot reload)
 
 ```bash
 # Terminal 1 — bridge
@@ -210,10 +256,12 @@ the right target; the launcher activates it automatically.
 **`behaviortree_cpp` not found when building bt_demo** — Source the ROS setup
 before running cmake: `source /opt/ros/jazzy/setup.bash`.
 
-**`fuser: command not found`** — Install `psmisc`: `sudo apt install -y psmisc`.
+**`fuser: command not found`** — `fuser` is provided by `psmisc`, which step 1 now installs. If you skipped step 1: `sudo apt install -y psmisc`.
 
 **`colcon: command not found`** — Install colcon:
 `sudo apt install -y python3-colcon-common-extensions`.
+
+**`inotifywait: command not found`** — Install `inotify-tools`: `sudo apt install -y inotify-tools`. The watcher falls back to a plain single run without it.
 
 **Port already in use (8765 or 7260)** — The launcher kills stale processes on
 startup. If it fails, run `fuser -k 8765/tcp 7260/tcp` manually.
