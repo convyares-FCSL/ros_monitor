@@ -124,3 +124,19 @@ export const useActiveBlackboardTouched = () => useBtStore((s) => active(s)?.bla
 // useSyncExternalStore loop forever. Shallow-compare so the ref is stable until
 // the set of trees actually changes.
 export const useTreeIds = () => useBtStore(useShallow((s) => Object.keys(s.trees)));
+
+// Live status tally for the active tree — feeds the header stat chips.
+export const useActiveStatusCounts = () =>
+  useBtStore(useShallow((s) => {
+    const counts = { running: 0, success: 0, failure: 0, idle: 0 };
+    const tree = active(s);
+    if (tree) {
+      for (const st of Object.values(tree.statusById)) {
+        if (st === 'RUNNING') counts.running++;
+        else if (st === 'SUCCESS') counts.success++;
+        else if (st === 'FAILURE') counts.failure++;
+        else counts.idle++;
+      }
+    }
+    return counts;
+  }));

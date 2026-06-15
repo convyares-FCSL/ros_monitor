@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import {
   useBtStore, useNodeDef, useNodeStatus, useActiveBlackboard,
@@ -7,7 +7,7 @@ import {
 import type { NodeStatus } from './types';
 
 const STATUS_STYLE: Record<NodeStatus, { label: string; cls: string }> = {
-  IDLE: { label: 'IDLE', cls: 'text-white/50 bg-white/5' },
+  IDLE: { label: 'IDLE', cls: 'text-[color:rgb(var(--fg-rgb)/0.5)] bg-[rgb(var(--fg-rgb)/0.05)]' },
   RUNNING: { label: 'RUNNING', cls: 'text-cyan-300 bg-cyan-500/15' },
   SUCCESS: { label: 'SUCCESS', cls: 'text-emerald-300 bg-emerald-500/15' },
   FAILURE: { label: 'FAILURE', cls: 'text-red-300 bg-red-500/15' },
@@ -23,6 +23,27 @@ const PANEL_BG = 'var(--menu-bg, rgba(15,23,42,0.85))';
 
 export function BTInspector() {
   const [open, setOpen] = useState(true);
+  // Resizable split between the blackboard (top) and node inspector (bottom).
+  const [topPct, setTopPct] = useState(50);
+  const asideRef = useRef<HTMLElement>(null);
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const el = asideRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const pct = ((ev.clientY - rect.top) / rect.height) * 100;
+      setTopPct(Math.min(85, Math.max(15, pct)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
   const selectedId = useBtStore((s) => s.selectedNodeId);
   const node = useNodeDef(selectedId ?? -1);
   const status = useNodeStatus(selectedId ?? -1);
@@ -55,7 +76,7 @@ export function BTInspector() {
     <>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="absolute z-30 w-6 h-10 flex items-center justify-center backdrop-blur-xl border border-white/[0.08] rounded-l-md text-white/50 hover:text-white hover:bg-white/5 transition-all duration-300"
+        className="absolute z-30 w-6 h-10 flex items-center justify-center backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.08)] rounded-l-md text-[color:rgb(var(--fg-rgb)/0.5)] hover:text-[color:rgb(var(--fg-rgb))] hover:bg-[rgb(var(--fg-rgb)/0.05)] transition-all duration-300"
         style={{ background: PANEL_BG, top: '88px', right: open ? '21rem' : '0' }}
         title={open ? 'Collapse' : 'Expand'}
       >
@@ -63,14 +84,15 @@ export function BTInspector() {
       </button>
 
       <aside
+        ref={asideRef}
         className={`absolute right-3 top-[68px] bottom-3 w-80 z-20 rounded-2xl backdrop-blur-2xl border flex flex-col overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${open ? 'translate-x-0' : 'translate-x-[calc(100%+1.5rem)]'}`}
         style={{ background: PANEL_BG, borderColor: 'rgba(255,255,255,0.08)' }}
       >
         {/* --- Top: Blackboard (always shown, tree-wide) --- */}
-        <div className="h-1/2 min-h-0 flex flex-col shrink-0">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
-            <span className="text-[9px] font-bold tracking-[0.18em] text-white/40">BLACKBOARD</span>
-            {blueprint && <span className="text-[10px] font-mono text-white/35 truncate max-w-[55%]">{blueprint.tree_id}</span>}
+        <div className="min-h-0 flex flex-col shrink-0" style={{ flexBasis: `${topPct}%` }}>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
+            <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">BLACKBOARD</span>
+            {blueprint && <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)] truncate max-w-[55%]">{blueprint.tree_id}</span>}
           </div>
           <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 space-y-0.5">
             {bbEntries.length === 0 ? (
@@ -78,8 +100,8 @@ export function BTInspector() {
             ) : (
               bbEntries.map(([k, v]) => (
                 <div key={k} className={`flex items-center justify-between gap-2 px-2 py-1 rounded ${referenced.has(k) ? 'bg-cyan-500/10 border border-cyan-500/20' : ''}`}>
-                  <span className={`text-[10px] font-mono truncate ${referenced.has(k) ? 'text-cyan-300' : 'text-white/55'}`}>{k}</span>
-                  <span key={touched[k] ?? 0} className="bt-bb-value text-[10px] font-mono text-white/80 truncate max-w-[55%] text-right">
+                  <span className={`text-[10px] font-mono truncate ${referenced.has(k) ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.55)]'}`}>{k}</span>
+                  <span key={touched[k] ?? 0} className="bt-bb-value text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.8)] truncate max-w-[55%] text-right">
                     {formatVal(v)}
                   </span>
                 </div>
@@ -88,27 +110,34 @@ export function BTInspector() {
           </div>
         </div>
 
+        {/* Draggable divider */}
+        <div onMouseDown={startResize}
+          className="group relative h-1.5 shrink-0 cursor-row-resize flex items-center justify-center border-y border-[rgb(var(--fg-rgb)/0.1)] hover:bg-[rgb(var(--fg-rgb)/0.06)] transition-colors"
+          title="Drag to resize">
+          <span className="w-8 h-0.5 rounded-full bg-[rgb(var(--fg-rgb)/0.2)] group-hover:bg-[rgb(var(--fg-rgb)/0.4)] transition-colors" />
+        </div>
+
         {/* --- Bottom: Node inspector (selected item) --- */}
-        <div className="h-1/2 min-h-0 flex flex-col border-t border-white/[0.1]">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
-            <span className="text-[9px] font-bold tracking-[0.18em] text-white/40">NODE INSPECTOR</span>
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
+            <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE INSPECTOR</span>
             {node && (
               <div className="flex items-center gap-2">
                 <span className={`px-2 py-0.5 rounded text-[9px] font-bold tracking-wider ${st.cls}`}>{st.label}</span>
-                <button onClick={() => select(null)} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                <button onClick={() => select(null)} className="text-[color:rgb(var(--fg-rgb)/0.4)] hover:text-[color:rgb(var(--fg-rgb))]"><X className="w-3.5 h-3.5" /></button>
               </div>
             )}
           </div>
           <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-3 space-y-4">
             {!node ? (
               <div className="h-full flex items-center justify-center">
-                <span className="text-[11px] font-mono text-white/30 text-center">Click a node to inspect its ports</span>
+                <span className="text-[11px] font-mono text-[color:rgb(var(--fg-rgb)/0.3)] text-center">Click a node to inspect its ports</span>
               </div>
             ) : (
               <>
                 <div>
-                  <div className="text-sm font-bold text-white truncate">{node.name}</div>
-                  <div className="text-[10px] font-mono text-white/40 truncate">{node.type} · {node.category}</div>
+                  <div className="text-sm font-bold text-[color:rgb(var(--fg-rgb))] truncate">{node.name}</div>
+                  <div className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.4)] truncate">{node.type} · {node.category}</div>
                 </div>
                 <Section title="PORT REMAPPINGS">
                   {inputs.length === 0 && outputs.length === 0 ? (
@@ -124,9 +153,9 @@ export function BTInspector() {
                   <Section title="SERVICES">
                     <div className="space-y-1">
                       {node.services.map((svc) => (
-                        <div key={svc.id} className="flex items-center justify-between text-[10px] font-mono text-white/55">
+                        <div key={svc.id} className="flex items-center justify-between text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)]">
                           <span className="truncate">⚙ {svc.name}</span>
-                          <span className="text-white/35">{svc.tick_ms}ms</span>
+                          <span className="text-[color:rgb(var(--fg-rgb)/0.35)]">{svc.tick_ms}ms</span>
                         </div>
                       ))}
                     </div>
@@ -146,9 +175,9 @@ function PortRow({ dir, port, val }: { dir: 'in' | 'out'; port: string; val: str
   return (
     <div className="flex items-center gap-2 text-[10px] font-mono">
       <span className={`px-1.5 py-0.5 rounded shrink-0 ${dir === 'in' ? 'text-sky-300 bg-sky-500/15' : 'text-amber-300 bg-amber-500/15'}`}>{dir}</span>
-      <span className="text-white/55 truncate">{port}</span>
-      <span className="text-white/25">←</span>
-      <span className={`truncate ${key ? 'text-cyan-300' : 'text-white/70'}`}>{val}</span>
+      <span className="text-[color:rgb(var(--fg-rgb)/0.55)] truncate">{port}</span>
+      <span className="text-[color:rgb(var(--fg-rgb)/0.25)]">←</span>
+      <span className={`truncate ${key ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.7)]'}`}>{val}</span>
     </div>
   );
 }
@@ -156,14 +185,14 @@ function PortRow({ dir, port, val }: { dir: 'in' | 'out'; port: string; val: str
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[9px] font-bold tracking-[0.18em] text-white/35 mb-1.5">{title}</div>
+      <div className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.35)] mb-1.5">{title}</div>
       {children}
     </div>
   );
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="text-[10px] font-mono text-white/25 italic px-1">{children}</div>;
+  return <div className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.25)] italic px-1">{children}</div>;
 }
 
 function formatVal(v: unknown): string {

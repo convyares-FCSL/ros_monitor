@@ -163,8 +163,8 @@ export const BTCanvas = forwardRef<BTCanvasHandle, BTCanvasProps>(function BTCan
       ) : (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
-            <div className="text-sm font-semibold text-white/70">Waiting for a behavior tree…</div>
-            <div className="mt-1.5 text-[11px] font-mono text-white/35">
+            <div className="text-sm font-semibold text-[color:rgb(var(--fg-rgb)/0.7)]">Waiting for a behavior tree…</div>
+            <div className="mt-1.5 text-[11px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)]">
               start the bridge in <span className="text-cyan-400">--mode demo</span> or <span className="text-cyan-400">--mode full</span>
             </div>
           </div>

@@ -57,7 +57,7 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
     >
       {node.decorators.map((dec) => (
         <div key={dec.id}
-          className="flex items-center px-2 text-[10px] font-mono text-white/55 border border-white/10 rounded-t-sm"
+          className="flex items-center px-2 text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)] border border-[rgb(var(--fg-rgb)/0.1)] rounded-t-sm"
           style={{ height: CAP_H, background: 'var(--menu-bg-solid, rgba(15,23,42,0.95))' }}>
           {decoratorLabel(dec)}
         </div>
@@ -65,25 +65,25 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
 
       {node.services.map((svc) => (
         <div key={svc.id}
-          className="flex items-center mx-2 px-2 text-[9.5px] font-mono text-white/40 border border-white/10"
+          className="flex items-center mx-2 px-2 text-[9.5px] font-mono text-[color:rgb(var(--fg-rgb)/0.4)] border border-[rgb(var(--fg-rgb)/0.1)]"
           style={{ height: SVC_H, background: 'color-mix(in srgb, var(--menu-bg-solid, rgba(15,23,42,0.95)) 84%, black)' }}>
           <span className="truncate">⚙ {svc.name} · {svc.tick_ms}ms</span>
         </div>
       ))}
 
       <div
-        className={`bt-core relative flex items-center gap-2 px-3 rounded-md ${CORE_CLASS[status]} ${selected ? 'ring-2 ring-white/50' : ''} ${node.category === 'subtree' ? 'bt-core-subtree' : ''}`}
+        className={`bt-core relative flex items-center gap-2 px-3 rounded-md ${CORE_CLASS[status]} ${selected ? 'ring-2 ring-[rgb(var(--fg-rgb)/0.5)]' : ''} ${node.category === 'subtree' ? 'bt-core-subtree' : ''}`}
         style={{ height: CORE_H }}
       >
-        {symbol && <span className="font-mono font-bold text-base text-white shrink-0">{symbol}</span>}
+        {symbol && <span className="font-mono font-bold text-base text-[color:rgb(var(--fg-rgb))] shrink-0">{symbol}</span>}
         <div className="min-w-0 flex-1">
-          <div className="text-[12px] font-semibold text-white truncate leading-tight">{node.name}</div>
-          <div className="text-[9px] font-mono text-white/40 truncate leading-tight">{node.type}</div>
+          <div className="text-[12px] font-semibold text-[color:rgb(var(--fg-rgb))] truncate leading-tight">{node.name}</div>
+          <div className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.4)] truncate leading-tight">{node.type}</div>
         </div>
         {box.hasChildren && (
           <button
             onClick={(e) => { e.stopPropagation(); toggleCollapse(box.id); }}
-            className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 text-[10px] shrink-0"
+            className="w-5 h-5 flex items-center justify-center rounded text-[color:rgb(var(--fg-rgb)/0.5)] hover:text-[color:rgb(var(--fg-rgb))] hover:bg-[rgb(var(--fg-rgb)/0.1)] text-[10px] shrink-0"
             title={collapsed ? 'Expand' : 'Collapse'}
           >
             {collapsed ? '▸' : '▾'}

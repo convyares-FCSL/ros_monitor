@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useCallback } from 'react';
+import type { SceneSettings } from '../types';
+import { DEFAULT_SCENE_SETTINGS } from '../types';
 
 export type ThemeId = 'midnight' | 'arctic' | 'ember' | 'forest' | 'light' | 'dark' | 'custom';
 
@@ -13,9 +15,21 @@ export interface Theme {
   headerBg: string;
   accent: string;
   accentHex: string;
+  // Picker dot colour. Defaults to accentHex; overridden for the grayscale
+  // themes so the swatch reads as its name (Dark = dark, Light = light).
+  swatchHex?: string;
   text: string;
   textMuted: string;
   textDim: string;
+  // Text colour for content sitting directly on the page background (which
+  // tracks sceneBg). Auto-darkens for light backgrounds. Panels stay dark, so
+  // panel text (--menu-text) is independent of these.
+  pageText: string;
+  pageTextMuted: string;
+  pageTextDim: string;
+  // Foreground RGB triple ("R G B") for panel text/overlays/borders, consumed
+  // via --fg-rgb. White on dark panels; dark slate on light panels.
+  fgRgb: string;
   emissiveIntensity: number;
   nodeColor: number;
   nodeColorHex: string;
@@ -55,6 +69,26 @@ function hexToInt(hex: string): number {
   return parseInt(hex.replace('#', ''), 16);
 }
 
+// Perceived brightness (0–1) of a hex colour, used to pick readable page text.
+function luminance(hex: string): number {
+  const n = hexToInt(hex);
+  const r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+// Foreground RGB triple for text/overlays on a given (panel) background.
+function fgRgbFor(bg: string): string {
+  return luminance(bg) > 0.55 ? '15 23 42' : '255 255 255';
+}
+
+// Readable text colours for content on a given background.
+function pageTextFor(bg: string) {
+  const light = luminance(bg) > 0.55;
+  return light
+    ? { pageText: '#0f172a', pageTextMuted: 'rgba(15,23,42,0.62)', pageTextDim: 'rgba(15,23,42,0.4)' }
+    : { pageText: '#ffffff', pageTextMuted: 'rgba(255,255,255,0.6)', pageTextDim: 'rgba(255,255,255,0.3)' };
+}
+
 function buildCustomTheme(colors: CustomColors): Theme {
   return {
     id: 'custom',
@@ -70,6 +104,8 @@ function buildCustomTheme(colors: CustomColors): Theme {
     text: 'text-white',
     textMuted: 'text-white/60',
     textDim: 'text-white/30',
+    ...pageTextFor(colors.sceneBg),
+    fgRgb: fgRgbFor(colors.menuBg),
     emissiveIntensity: colors.emissive,
     nodeColor: hexToInt(colors.node),
     nodeColorHex: colors.node,
@@ -86,174 +122,136 @@ function buildCustomTheme(colors: CustomColors): Theme {
   };
 }
 
-export const THEMES: Record<Exclude<ThemeId, 'custom'>, Theme> = {
-  midnight: {
-    id: 'midnight',
-    label: 'Midnight',
-    bg: '#030712',
-    bgScene: 0x030712,
-    fog: 0x030712,
-    panelBg: 'rgba(15,23,42,0.82)',
-    panelBorder: 'rgba(255,255,255,0.07)',
-    headerBg: 'rgba(3,7,18,0.85)',
-    accent: 'text-cyan-400',
-    accentHex: '#22d3ee',
-    text: 'text-white',
-    textMuted: 'text-white/60',
-    textDim: 'text-white/30',
-    emissiveIntensity: 0.45,
-    nodeColor: 0x06b6d4,
-    nodeColorHex: '#06b6d4',
-    nodeCss: 'text-cyan-400',
-    topicColor: 0xf97316,
-    topicColorHex: '#f97316',
-    topicCss: 'text-orange-400',
-    serviceColor: 0x10b981,
-    serviceColorHex: '#10b981',
-    serviceCss: 'text-emerald-400',
-    actionColor: 0xa855f7,
-    actionColorHex: '#a855f7',
-    actionCss: 'text-purple-400',
-  },
+// ── Central theme appearance ──────────────────────────────────────────────────
+// Single source of truth for the full per-theme look: entity colours/sizes,
+// backgrounds, grid, post-processing, labels and edges. The 3D scene applies
+// these directly, and the chrome (THEMES below) derives its colours from the
+// same data — so editing a theme means editing one entry here.
+export const THEME_SCENE_SETTINGS: Record<Exclude<ThemeId, 'custom'>, SceneSettings> = {
+  midnight: { ...DEFAULT_SCENE_SETTINGS },
   arctic: {
-    id: 'arctic',
-    label: 'Arctic',
-    bg: '#0c1929',
-    bgScene: 0x0c1929,
-    fog: 0x0c1929,
-    panelBg: 'rgba(12,25,41,0.88)',
-    panelBorder: 'rgba(56,189,248,0.1)',
-    headerBg: 'rgba(12,25,41,0.9)',
-    accent: 'text-sky-400',
-    accentHex: '#38bdf8',
-    text: 'text-white',
-    textMuted: 'text-sky-100/60',
-    textDim: 'text-sky-200/25',
-    emissiveIntensity: 0.45,
-    nodeColor: 0x38bdf8,
-    nodeColorHex: '#38bdf8',
-    nodeCss: 'text-sky-400',
-    topicColor: 0x818cf8,
-    topicColorHex: '#818cf8',
-    topicCss: 'text-indigo-400',
-    serviceColor: 0x2dd4bf,
-    serviceColorHex: '#2dd4bf',
-    serviceCss: 'text-teal-400',
-    actionColor: 0xf472b6,
-    actionColorHex: '#f472b6',
-    actionCss: 'text-pink-400',
+    nodes: { color: '#38bdf8', size: 1, emissive: 0.45 },
+    topics: { color: '#818cf8', size: 1, emissive: 0.4 },
+    services: { color: '#2dd4bf', size: 1, emissive: 0.5 },
+    actions: { color: '#c4b5fd', size: 1, emissive: 0.42 },
+    lineThickness: 1, packetScale: 1.5,
+    nodeEdges: true, topicEdges: false, serviceEdges: false, actionEdges: false,
+    edgeColor: '#3b4d5c', menuBg: '#0a1622', sceneBg: '#16242f',
+    gridVisible: true, gridOpacity: 0.5, gridColor: '#1e3445',
+    bloomStrength: 0.8, bloomRadius: 0.6, bloomThreshold: 0.6, fogDensity: 0.015,
+    labelScale: 1, labelOffset: 2.2, labelColor: 'entity', edgeThickness: 1.12,
   },
   ember: {
-    id: 'ember',
-    label: 'Ember',
-    bg: '#110805',
-    bgScene: 0x110805,
-    fog: 0x110805,
-    panelBg: 'rgba(24,12,8,0.88)',
-    panelBorder: 'rgba(249,115,22,0.12)',
-    headerBg: 'rgba(17,8,5,0.9)',
-    accent: 'text-orange-400',
-    accentHex: '#fb923c',
-    text: 'text-white',
-    textMuted: 'text-orange-100/60',
-    textDim: 'text-orange-200/25',
-    emissiveIntensity: 0.5,
-    nodeColor: 0xfb923c,
-    nodeColorHex: '#fb923c',
-    nodeCss: 'text-orange-400',
-    topicColor: 0xfbbf24,
-    topicColorHex: '#fbbf24',
-    topicCss: 'text-amber-400',
-    serviceColor: 0xf87171,
-    serviceColorHex: '#f87171',
-    serviceCss: 'text-red-400',
-    actionColor: 0xfb7185,
-    actionColorHex: '#fb7185',
-    actionCss: 'text-rose-400',
+    nodes: { color: '#fb923c', size: 1, emissive: 0.5 },
+    topics: { color: '#fbbf24', size: 1, emissive: 0.45 },
+    services: { color: '#ef4444', size: 1, emissive: 0.55 },
+    actions: { color: '#f43f5e', size: 1, emissive: 0.5 },
+    lineThickness: 1, packetScale: 1.5,
+    nodeEdges: true, topicEdges: false, serviceEdges: false, actionEdges: false,
+    edgeColor: '#5c3a2c', menuBg: '#190d08', sceneBg: '#251410',
+    gridVisible: true, gridOpacity: 0.5, gridColor: '#3d2016',
+    bloomStrength: 1.1, bloomRadius: 0.6, bloomThreshold: 0.55, fogDensity: 0.018,
+    labelScale: 1, labelOffset: 2.2, labelColor: 'entity', edgeThickness: 1.12,
   },
   forest: {
-    id: 'forest',
-    label: 'Forest',
-    bg: '#05120a',
-    bgScene: 0x05120a,
-    fog: 0x05120a,
-    panelBg: 'rgba(8,24,14,0.88)',
-    panelBorder: 'rgba(16,185,129,0.1)',
-    headerBg: 'rgba(5,18,10,0.9)',
-    accent: 'text-emerald-400',
-    accentHex: '#34d399',
-    text: 'text-white',
-    textMuted: 'text-emerald-100/60',
-    textDim: 'text-emerald-200/25',
-    emissiveIntensity: 0.4,
-    nodeColor: 0x34d399,
-    nodeColorHex: '#34d399',
-    nodeCss: 'text-emerald-400',
-    topicColor: 0xa3e635,
-    topicColorHex: '#a3e635',
-    topicCss: 'text-lime-400',
-    serviceColor: 0x4ade80,
-    serviceColorHex: '#4ade80',
-    serviceCss: 'text-green-400',
-    actionColor: 0x22d3ee,
-    actionColorHex: '#22d3ee',
-    actionCss: 'text-cyan-400',
+    nodes: { color: '#4ade80', size: 1, emissive: 0.45 },
+    topics: { color: '#d97706', size: 1, emissive: 0.4 },
+    services: { color: '#14b8a6', size: 1, emissive: 0.5 },
+    actions: { color: '#a78bfa', size: 1, emissive: 0.42 },
+    lineThickness: 1, packetScale: 1.5,
+    nodeEdges: true, topicEdges: false, serviceEdges: false, actionEdges: false,
+    edgeColor: '#2f4a38', menuBg: '#0b160f', sceneBg: '#16241b',
+    gridVisible: true, gridOpacity: 0.5, gridColor: '#1f3a28',
+    bloomStrength: 0.85, bloomRadius: 0.55, bloomThreshold: 0.62, fogDensity: 0.02,
+    labelScale: 1, labelOffset: 2.2, labelColor: 'entity', edgeThickness: 1.12,
   },
   dark: {
-    id: 'dark',
-    label: 'Dark',
-    bg: '#111111',
-    bgScene: 0x111111,
-    fog: 0x111111,
-    panelBg: 'rgba(24,24,24,0.92)',
-    panelBorder: 'rgba(255,255,255,0.08)',
-    headerBg: 'rgba(17,17,17,0.92)',
-    accent: 'text-white',
-    accentHex: '#e5e5e5',
-    text: 'text-white',
-    textMuted: 'text-white/60',
-    textDim: 'text-white/25',
-    emissiveIntensity: 0.5,
-    nodeColor: 0x60a5fa,
-    nodeColorHex: '#60a5fa',
-    nodeCss: 'text-blue-400',
-    topicColor: 0xfbbf24,
-    topicColorHex: '#fbbf24',
-    topicCss: 'text-amber-400',
-    serviceColor: 0x34d399,
-    serviceColorHex: '#34d399',
-    serviceCss: 'text-emerald-400',
-    actionColor: 0xf472b6,
-    actionColorHex: '#f472b6',
-    actionCss: 'text-pink-400',
+    nodes: { color: '#22d3ee', size: 1, emissive: 0.45 },
+    topics: { color: '#fb923c', size: 1, emissive: 0.4 },
+    services: { color: '#34d399', size: 1, emissive: 0.5 },
+    actions: { color: '#c084fc', size: 1, emissive: 0.4 },
+    lineThickness: 1, packetScale: 1.5,
+    nodeEdges: true, topicEdges: false, serviceEdges: false, actionEdges: false,
+    edgeColor: '#3f3f46', menuBg: '#09090b', sceneBg: '#18181b',
+    gridVisible: true, gridOpacity: 0.5, gridColor: '#27272a',
+    bloomStrength: 0.9, bloomRadius: 0.55, bloomThreshold: 0.65, fogDensity: 0.01,
+    labelScale: 1, labelOffset: 2.2, labelColor: 'entity', edgeThickness: 1.12,
   },
   light: {
-    id: 'light',
-    label: 'Light',
-    bg: '#f8fafc',
-    bgScene: 0xf8fafc,
-    fog: 0xf8fafc,
-    panelBg: 'rgba(15,23,42,0.88)',
-    panelBorder: 'rgba(0,0,0,0.12)',
-    headerBg: 'rgba(15,23,42,0.92)',
-    accent: 'text-slate-800',
-    accentHex: '#1e293b',
-    text: 'text-white',
-    textMuted: 'text-white/60',
-    textDim: 'text-white/30',
-    emissiveIntensity: 0.2,
-    nodeColor: 0x2563eb,
-    nodeColorHex: '#2563eb',
-    nodeCss: 'text-blue-600',
-    topicColor: 0xd97706,
-    topicColorHex: '#d97706',
-    topicCss: 'text-amber-600',
-    serviceColor: 0x059669,
-    serviceColorHex: '#059669',
-    serviceCss: 'text-emerald-600',
-    actionColor: 0x9333ea,
-    actionColorHex: '#9333ea',
-    actionCss: 'text-purple-600',
+    nodes: { color: '#0891b2', size: 1, emissive: 0.15 },
+    topics: { color: '#ea580c', size: 1, emissive: 0.12 },
+    services: { color: '#059669', size: 1, emissive: 0.15 },
+    actions: { color: '#9333ea', size: 1, emissive: 0.13 },
+    lineThickness: 1.2, packetScale: 1.4,
+    nodeEdges: true, topicEdges: false, serviceEdges: false, actionEdges: false,
+    edgeColor: '#64748b', menuBg: '#f8fafc', sceneBg: '#e9eef4',
+    gridVisible: true, gridOpacity: 0.45, gridColor: '#cbd5e1',
+    bloomStrength: 0.3, bloomRadius: 0.4, bloomThreshold: 0.85, fogDensity: 0.006,
+    labelScale: 1, labelOffset: 2.2, labelColor: 'entity', edgeThickness: 1.12,
+  },
+};
+
+// Colour/background fields derived from a theme's scene settings, so chrome and
+// the 3D scene never drift apart.
+function themeColors(s: SceneSettings) {
+  return {
+    // Page background tracks the 3D scene background, with page text auto-chosen
+    // for contrast. Panels keep their own (dark) styling via panelBg.
+    bg: s.sceneBg,
+    bgScene: hexToInt(s.sceneBg),
+    fog: hexToInt(s.sceneBg),
+    ...pageTextFor(s.sceneBg),
+    fgRgb: fgRgbFor(s.menuBg),
+    emissiveIntensity: s.nodes.emissive,
+    nodeColor: hexToInt(s.nodes.color), nodeColorHex: s.nodes.color,
+    topicColor: hexToInt(s.topics.color), topicColorHex: s.topics.color,
+    serviceColor: hexToInt(s.services.color), serviceColorHex: s.services.color,
+    actionColor: hexToInt(s.actions.color), actionColorHex: s.actions.color,
+  };
+}
+
+export const THEMES: Record<Exclude<ThemeId, 'custom'>, Theme> = {
+  midnight: {
+    id: 'midnight', label: 'Midnight',
+    panelBg: 'rgba(15,23,42,0.82)', panelBorder: 'rgba(255,255,255,0.07)', headerBg: 'rgba(3,7,18,0.85)',
+    accent: 'text-cyan-400', accentHex: '#22d3ee', text: 'text-white', textMuted: 'text-white/60', textDim: 'text-white/30',
+    nodeCss: 'text-cyan-400', topicCss: 'text-orange-400', serviceCss: 'text-emerald-400', actionCss: 'text-purple-400',
+    ...themeColors(THEME_SCENE_SETTINGS.midnight),
+  },
+  arctic: {
+    id: 'arctic', label: 'Arctic',
+    panelBg: 'rgba(12,25,41,0.88)', panelBorder: 'rgba(56,189,248,0.1)', headerBg: 'rgba(12,25,41,0.9)',
+    accent: 'text-sky-400', accentHex: '#38bdf8', text: 'text-white', textMuted: 'text-sky-100/60', textDim: 'text-sky-200/25',
+    nodeCss: 'text-sky-400', topicCss: 'text-indigo-400', serviceCss: 'text-teal-400', actionCss: 'text-violet-400',
+    ...themeColors(THEME_SCENE_SETTINGS.arctic),
+  },
+  ember: {
+    id: 'ember', label: 'Ember',
+    panelBg: 'rgba(24,12,8,0.88)', panelBorder: 'rgba(249,115,22,0.12)', headerBg: 'rgba(17,8,5,0.9)',
+    accent: 'text-orange-400', accentHex: '#fb923c', text: 'text-white', textMuted: 'text-orange-100/60', textDim: 'text-orange-200/25',
+    nodeCss: 'text-orange-400', topicCss: 'text-amber-400', serviceCss: 'text-red-400', actionCss: 'text-rose-400',
+    ...themeColors(THEME_SCENE_SETTINGS.ember),
+  },
+  forest: {
+    id: 'forest', label: 'Forest',
+    panelBg: 'rgba(8,24,14,0.88)', panelBorder: 'rgba(16,185,129,0.1)', headerBg: 'rgba(5,18,10,0.9)',
+    accent: 'text-emerald-400', accentHex: '#34d399', text: 'text-white', textMuted: 'text-emerald-100/60', textDim: 'text-emerald-200/25',
+    nodeCss: 'text-green-400', topicCss: 'text-amber-500', serviceCss: 'text-teal-400', actionCss: 'text-violet-400',
+    ...themeColors(THEME_SCENE_SETTINGS.forest),
+  },
+  dark: {
+    id: 'dark', label: 'Dark',
+    panelBg: 'rgba(24,24,24,0.92)', panelBorder: 'rgba(255,255,255,0.08)', headerBg: 'rgba(17,17,17,0.92)',
+    accent: 'text-white', accentHex: '#e5e5e5', swatchHex: '#3f3f46', text: 'text-white', textMuted: 'text-white/60', textDim: 'text-white/25',
+    nodeCss: 'text-cyan-400', topicCss: 'text-orange-400', serviceCss: 'text-emerald-400', actionCss: 'text-purple-400',
+    ...themeColors(THEME_SCENE_SETTINGS.dark),
+  },
+  light: {
+    id: 'light', label: 'Light',
+    panelBg: 'rgba(248,250,252,0.85)', panelBorder: 'rgba(15,23,42,0.12)', headerBg: 'rgba(248,250,252,0.9)',
+    accent: 'text-slate-800', accentHex: '#1e293b', swatchHex: '#e2e8f0', text: 'text-slate-900', textMuted: 'text-slate-900/60', textDim: 'text-slate-900/30',
+    nodeCss: 'text-cyan-700', topicCss: 'text-orange-600', serviceCss: 'text-emerald-600', actionCss: 'text-purple-600',
+    ...themeColors(THEME_SCENE_SETTINGS.light),
   },
 };
 
@@ -263,6 +261,11 @@ export interface ThemeContextValue {
   setThemeId: (id: ThemeId) => void;
   customColors: CustomColors;
   setCustomColors: (colors: CustomColors) => void;
+  // Full scene appearance for the active theme. Presets are canonical; editing
+  // produces the 'custom' theme. Shared by the 3D scene and the Settings page.
+  sceneSettings: SceneSettings;
+  applyScene: (s: SceneSettings) => void;
+  resetScene: () => void;
 }
 
 export const ThemeContext = createContext<ThemeContextValue>({
@@ -271,6 +274,9 @@ export const ThemeContext = createContext<ThemeContextValue>({
   setThemeId: () => {},
   customColors: DEFAULT_CUSTOM_COLORS,
   setCustomColors: () => {},
+  sceneSettings: THEME_SCENE_SETTINGS.midnight,
+  applyScene: () => {},
+  resetScene: () => {},
 });
 
 export function useTheme() {
@@ -294,6 +300,14 @@ function loadCustomColors(): CustomColors {
   return DEFAULT_CUSTOM_COLORS;
 }
 
+function loadCustomScene(): SceneSettings {
+  try {
+    const saved = localStorage.getItem('ros3d-scene-settings');
+    if (saved) return { ...DEFAULT_SCENE_SETTINGS, ...JSON.parse(saved) };
+  } catch { /* ignore */ }
+  return DEFAULT_SCENE_SETTINGS;
+}
+
 export function useThemeProvider() {
   const [themeId, setThemeIdState] = useState<ThemeId>(() => {
     const saved = localStorage.getItem('ros3d-theme');
@@ -312,9 +326,40 @@ export function useThemeProvider() {
     localStorage.setItem('ros3d-custom-colors', JSON.stringify(colors));
   }, []);
 
+  // Custom-theme scene overrides (persisted). Presets read from THEME_SCENE_SETTINGS.
+  const [customScene, setCustomScene] = useState<SceneSettings>(loadCustomScene);
+
   const theme = themeId === 'custom'
     ? buildCustomTheme(customColors)
     : THEMES[themeId];
 
-  return { theme, themeId, setThemeId, customColors, setCustomColors };
+  const sceneSettings = themeId === 'custom' ? customScene : THEME_SCENE_SETTINGS[themeId];
+
+  // Apply a full scene-settings edit: persist as the custom theme, mirror its
+  // colours into customColors, and switch to 'custom'.
+  const applyScene = useCallback((s: SceneSettings) => {
+    setCustomScene(s);
+    localStorage.setItem('ros3d-scene-settings', JSON.stringify(s));
+    setCustomColorsState({
+      menuBg: s.menuBg, sceneBg: s.sceneBg,
+      node: s.nodes.color, topic: s.topics.color, service: s.services.color, action: s.actions.color,
+      emissive: s.nodes.emissive,
+    });
+    localStorage.setItem('ros3d-custom-colors', JSON.stringify({
+      menuBg: s.menuBg, sceneBg: s.sceneBg,
+      node: s.nodes.color, topic: s.topics.color, service: s.services.color, action: s.actions.color,
+      emissive: s.nodes.emissive,
+    }));
+    setThemeId('custom');
+  }, [setThemeId]);
+
+  const resetScene = useCallback(() => {
+    setCustomScene(DEFAULT_SCENE_SETTINGS);
+    localStorage.removeItem('ros3d-scene-settings');
+  }, []);
+
+  return {
+    theme, themeId, setThemeId, customColors, setCustomColors,
+    sceneSettings, applyScene, resetScene,
+  };
 }

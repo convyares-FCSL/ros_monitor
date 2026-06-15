@@ -50,8 +50,8 @@ export function InspectorDrawer({
     <>
       <button onClick={onToggle}
         className={`absolute z-30 w-6 h-10 flex items-center justify-center
-          backdrop-blur-xl border border-white/[0.08] rounded-l-md
-          text-white/50 hover:text-white hover:bg-white/5 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
+          backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.08)] rounded-l-md
+          text-[color:rgb(var(--fg-rgb)/0.5)] hover:text-[color:rgb(var(--fg-rgb))] hover:bg-[rgb(var(--fg-rgb)/0.05)] transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
           ${open ? 'right-[25.75rem]' : 'right-0'}`}
         style={{ background: 'var(--menu-bg)', top: '88px' }}>
         {open ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
@@ -68,7 +68,7 @@ export function InspectorDrawer({
             <span className="text-xs font-bold tracking-widest uppercase" style={{ color: inspectorColor }}>{inspectorTitle}</span>
           </div>
           {(selectedEntity || selectedParticle) && (
-            <button onClick={onClearSelected} className="text-white/30 hover:text-white/70 transition-colors">
+            <button onClick={onClearSelected} className="text-[color:rgb(var(--fg-rgb)/0.3)] hover:text-[color:rgb(var(--fg-rgb)/0.7)] transition-colors">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -107,7 +107,7 @@ export function InspectorDrawer({
 // === EMPTY STATE ===
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-16 gap-4 text-white/25">
+    <div className="flex flex-col items-center justify-center py-16 gap-4 text-[color:rgb(var(--fg-rgb)/0.25)]">
       <Search className="w-12 h-12 stroke-[1]" />
       <p className="text-xs text-center max-w-[220px] leading-relaxed">
         Click on any traveling 3D message icon to pause and inspect its payload
@@ -178,11 +178,11 @@ function NodeInspector({ entity, graph, messages, nodeLifecycles, nodeParams, to
         <InfoRow label="Selection" value={node.name} color="text-cyan-400" />
         <InfoRow label="Type" value="" badge="node" badgeColor="bg-cyan-500/20 text-cyan-400 border-cyan-500/30" />
         <div className="flex items-center gap-3 py-1">
-          <span className="text-[11px] text-white/40 font-semibold">PID</span>
+          <span className="text-[11px] text-[color:rgb(var(--fg-rgb)/0.4)] font-semibold">PID</span>
           <Badge color={node.pid === null ? 'red' : 'green'}>
             {node.pid === null ? 'PHANTOM' : String(node.pid)}
           </Badge>
-          <span className="text-[11px] text-white/40 font-semibold ml-2">Lifecycle</span>
+          <span className="text-[11px] text-[color:rgb(var(--fg-rgb)/0.4)] font-semibold ml-2">Lifecycle</span>
           {lifecycle
             ? <Badge color={lifecycleColor(lifecycle.state)}>{lifecycle.state.toUpperCase()}</Badge>
             : <Badge color="slate">UNKNOWN</Badge>}
@@ -190,7 +190,7 @@ function NodeInspector({ entity, graph, messages, nodeLifecycles, nodeParams, to
       </div>
 
       {/* Divider */}
-      <div className="border-t border-white/[0.08]" />
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)]" />
 
       {/* Parameters */}
       {params && Object.keys(params).length > 0 && (
@@ -198,8 +198,8 @@ function NodeInspector({ entity, graph, messages, nodeLifecycles, nodeParams, to
           <div className="space-y-1">
             {Object.entries(params).map(([k, v]) => (
               <div key={k} className="flex justify-between text-[10px] font-mono gap-2">
-                <span className="text-white/40 truncate">{k}</span>
-                <span className="text-white/70">{String(v)}</span>
+                <span className="text-[color:rgb(var(--fg-rgb)/0.4)] truncate">{k}</span>
+                <span className="text-[color:rgb(var(--fg-rgb)/0.7)]">{String(v)}</span>
               </div>
             ))}
           </div>
@@ -244,7 +244,7 @@ function NodeInspector({ entity, graph, messages, nodeLifecycles, nodeParams, to
       </CollapsedSection>
 
       {/* Divider before live data */}
-      <div className="border-t border-white/[0.08] pt-3">
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)] pt-3">
         <LiveDataSection messages={nodeMessages} selected={selectedMsg} onSelect={setSelectedMsg} />
       </div>
 
@@ -278,7 +278,7 @@ function TopicInspector({ entity, graph, messages, topicHz }: {
         <InfoRow label="Msg Type" value={topic.types[0] ?? 'unknown'} />
       </div>
 
-      <div className="border-t border-white/[0.08]" />
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)]" />
 
       <CollapsedSection title="PUBLISHERS" count={topic.publishers.length}>
         {topic.publishers.length === 0 ? <EmptyChip /> : <ChipList items={topic.publishers} color="cyan" />}
@@ -289,13 +289,13 @@ function TopicInspector({ entity, graph, messages, topicHz }: {
       </CollapsedSection>
 
       {/* Divider before live data */}
-      <div className="border-t border-white/[0.08] pt-3 space-y-3">
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)] pt-3 space-y-3">
         {/* Frequency card with sparkline */}
-        <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-2">
+        <div className="rounded-lg border border-[rgb(var(--fg-rgb)/0.06)] bg-[rgb(var(--fg-rgb)/0.02)] p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-green-400" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">FREQUENCY</span>
+              <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)]">FREQUENCY</span>
             </div>
             <Badge color={hz ? (hz.health === 'stable' ? 'green' : hz.health === 'jitter' ? 'amber' : 'red') : 'green'}>
               {!hz || hz.health === 'stale' ? '--' : `${hz.hz.toFixed(1)} Hz`}
@@ -304,11 +304,11 @@ function TopicInspector({ entity, graph, messages, topicHz }: {
           {hz && hz.history.length >= 2 && (
             <>
               <FrequencySparkline history={hz.history} health={hz.health} />
-              <div className="text-[9px] text-white/25">30 s window</div>
+              <div className="text-[9px] text-[color:rgb(var(--fg-rgb)/0.25)]">30 s window</div>
             </>
           )}
           {(!hz || hz.history.length < 2) && (
-            <div className="text-[10px] text-white/25 italic py-2">Waiting for frequency data...</div>
+            <div className="text-[10px] text-[color:rgb(var(--fg-rgb)/0.25)] italic py-2">Waiting for frequency data...</div>
           )}
         </div>
 
@@ -343,7 +343,7 @@ function ServiceInspector({ entity, graph, serviceInvocations }: {
         <InfoRow label="Srv Type" value={svc.types[0] ?? 'unknown'} />
       </div>
 
-      <div className="border-t border-white/[0.08]" />
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)]" />
 
       <CollapsedSection title="SERVERS" count={svc.servers.length}>
         {svc.servers.length === 0 ? <EmptyChip /> : <ChipList items={svc.servers} color="green" />}
@@ -358,12 +358,12 @@ function ServiceInspector({ entity, graph, serviceInvocations }: {
       </CollapsedSection>
 
       {/* Divider before calls */}
-      <div className="border-t border-white/[0.08] pt-3 space-y-2">
-        <div className="text-[11px] font-bold uppercase tracking-widest text-white/50 pb-1">
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)] pt-3 space-y-2">
+        <div className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)] pb-1">
           SERVICE CALLS
         </div>
         {calls.length === 0 ? (
-          <p className="text-[10px] text-white/30 italic leading-relaxed">
+          <p className="text-[10px] text-[color:rgb(var(--fg-rgb)/0.3)] italic leading-relaxed">
             No calls captured yet. Enable service introspection on the server node to monitor live calls.
           </p>
         ) : (
@@ -371,12 +371,12 @@ function ServiceInspector({ entity, graph, serviceInvocations }: {
             {calls.map(call => (
               <button key={call.id} onClick={() => setSelectedCall(selectedCall?.id === call.id ? null : call)}
                 className={`w-full flex items-center gap-2 px-2.5 py-2 text-left rounded-md border transition-all
-                  ${selectedCall?.id === call.id ? 'border-green-500/40 bg-green-500/10' : 'border-white/[0.05] bg-black/20 hover:bg-white/[0.03]'}`}>
+                  ${selectedCall?.id === call.id ? 'border-green-500/40 bg-green-500/10' : 'border-[rgb(var(--fg-rgb)/0.05)] bg-black/20 hover:bg-[rgb(var(--fg-rgb)/0.03)]'}`}>
                 <Shield className="w-3 h-3 text-green-400/60 flex-shrink-0" />
-                <span className="text-[10px] font-mono text-white/50 flex-1">
+                <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.5)] flex-1">
                   {call.event_type === 0 ? 'REQUEST_SENT' : 'REQUEST_RECEIVED'}
                 </span>
-                <span className="text-[9px] text-white/30 font-mono">
+                <span className="text-[9px] text-[color:rgb(var(--fg-rgb)/0.3)] font-mono">
                   {new Date(call.timestamp).toLocaleTimeString([], { hour12: false })}
                 </span>
               </button>
@@ -410,7 +410,7 @@ function ActionInspector({ entity, graph, messages }: {
         <InfoRow label="Action Type" value={action.type} />
       </div>
 
-      <div className="border-t border-white/[0.08]" />
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)]" />
 
       <CollapsedSection title="SERVERS" count={action.servers.length}>
         {action.servers.length === 0 ? <EmptyChip /> : <ChipList items={action.servers} color="purple" />}
@@ -421,7 +421,7 @@ function ActionInspector({ entity, graph, messages }: {
       </CollapsedSection>
 
       {/* Divider before live data */}
-      <div className="border-t border-white/[0.08] pt-3">
+      <div className="border-t border-[rgb(var(--fg-rgb)/0.08)] pt-3">
         <LiveDataSection messages={actionMessages} selected={selectedMsg} onSelect={setSelectedMsg} />
       </div>
 
@@ -461,9 +461,9 @@ function LiveDataSection({ messages, selected, onSelect }: {
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Activity className="w-3.5 h-3.5 text-green-400/60" />
-          <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">LIVE DATA</span>
+          <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)]">LIVE DATA</span>
         </div>
-        <p className="text-[10px] text-white/25 italic">No messages captured yet</p>
+        <p className="text-[10px] text-[color:rgb(var(--fg-rgb)/0.25)] italic">No messages captured yet</p>
       </div>
     );
   }
@@ -473,27 +473,27 @@ function LiveDataSection({ messages, selected, onSelect }: {
       <div className="flex items-center justify-between pb-1">
         <div className="flex items-center gap-2">
           <Activity className="w-3.5 h-3.5 text-green-400/60" />
-          <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">LIVE DATA</span>
+          <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)]">LIVE DATA</span>
         </div>
-        <span className="text-[10px] font-mono text-white/25">{groupsRef.current.size}</span>
+        <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.25)]">{groupsRef.current.size}</span>
       </div>
       {topicOrderRef.current.map(topic => {
         const msgs = groupsRef.current.get(topic);
         if (!msgs || msgs.length === 0) return null;
         return (
-        <details key={topic} className="group/live rounded-lg border border-white/[0.06] bg-white/[0.02]">
-          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none hover:bg-white/[0.03] text-[11px]">
-            <ChevronRight className="w-3 h-3 text-white/30 transition-transform duration-150 group-open/live:rotate-90" />
-            <span className="font-mono text-white/60 flex-1 truncate">{topic}</span>
-            <span className="text-[9px] font-mono text-white/30">{msgs.length} entries</span>
+        <details key={topic} className="group/live rounded-lg border border-[rgb(var(--fg-rgb)/0.06)] bg-[rgb(var(--fg-rgb)/0.02)]">
+          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none hover:bg-[rgb(var(--fg-rgb)/0.03)] text-[11px]">
+            <ChevronRight className="w-3 h-3 text-[color:rgb(var(--fg-rgb)/0.3)] transition-transform duration-150 group-open/live:rotate-90" />
+            <span className="font-mono text-[color:rgb(var(--fg-rgb)/0.6)] flex-1 truncate">{topic}</span>
+            <span className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.3)]">{msgs.length} entries</span>
           </summary>
           <div className="px-3 pb-2 space-y-1">
             {msgs.map(msg => (
               <button key={msg.id} onClick={() => onSelect(selected?.id === msg.id ? null : msg)}
                 className={`w-full text-left px-2.5 py-2 rounded-lg border text-[10px] font-mono transition-all
-                  ${selected?.id === msg.id ? 'border-cyan-500/40 bg-cyan-500/10' : 'border-transparent hover:bg-white/[0.03]'}`}>
+                  ${selected?.id === msg.id ? 'border-cyan-500/40 bg-cyan-500/10' : 'border-transparent hover:bg-[rgb(var(--fg-rgb)/0.03)]'}`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-white/50">{new Date(msg.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)}, {msg.size_bytes} Bytes</span>
+                  <span className="text-[color:rgb(var(--fg-rgb)/0.5)]">{new Date(msg.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)}, {msg.size_bytes} Bytes</span>
                 </div>
                 <div className="mt-1">
                   <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
@@ -515,10 +515,10 @@ function PayloadBlock({ payload, meta }: { payload: Record<string, unknown> | nu
   if (!payload) return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Code className="w-3.5 h-3.5 text-white/30" />
-        <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">PAYLOAD VIEWER</span>
+        <Code className="w-3.5 h-3.5 text-[color:rgb(var(--fg-rgb)/0.3)]" />
+        <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)]">PAYLOAD VIEWER</span>
       </div>
-      <div className="bg-black/50 border border-white/[0.05] rounded-lg p-3 text-[10px] text-white/30 italic">
+      <div className="bg-black/50 border border-[rgb(var(--fg-rgb)/0.05)] rounded-lg p-3 text-[10px] text-[color:rgb(var(--fg-rgb)/0.3)] italic">
         Payload not available (dropped or empty)
       </div>
     </div>
@@ -527,10 +527,10 @@ function PayloadBlock({ payload, meta }: { payload: Record<string, unknown> | nu
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         <Code className="w-3.5 h-3.5 text-cyan-400/60" />
-        <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">PAYLOAD VIEWER</span>
+        <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)]">PAYLOAD VIEWER</span>
       </div>
-      <div className="text-[9px] text-white/30 font-mono">{meta}</div>
-      <div className="bg-black/50 border border-white/[0.05] rounded-lg p-3 font-mono text-[10px] text-white/60 overflow-x-auto whitespace-pre-wrap break-all max-h-52 scrollbar-thin">
+      <div className="text-[9px] text-[color:rgb(var(--fg-rgb)/0.3)] font-mono">{meta}</div>
+      <div className="bg-black/50 border border-[rgb(var(--fg-rgb)/0.05)] rounded-lg p-3 font-mono text-[10px] text-[color:rgb(var(--fg-rgb)/0.6)] overflow-x-auto whitespace-pre-wrap break-all max-h-52 scrollbar-thin">
         {JSON.stringify(payload, null, 2)}
       </div>
     </div>
@@ -551,17 +551,17 @@ function TopicChip({ name, hz }: { name: string; hz?: TopicHzState }) {
 }
 
 function EmptyChip() {
-  return <span className="text-[10px] text-white/25 italic">None</span>;
+  return <span className="text-[10px] text-[color:rgb(var(--fg-rgb)/0.25)] italic">None</span>;
 }
 
 function InfoRow({ label, value, color, badge, badgeColor }: { label: string; value: string; color?: string; badge?: string; badgeColor?: string }) {
   return (
     <div className="flex justify-between items-center text-[11px]">
-      <span className="text-white/40 font-semibold">{label}</span>
+      <span className="text-[color:rgb(var(--fg-rgb)/0.4)] font-semibold">{label}</span>
       {badge ? (
         <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-mono border ${badgeColor}`}>{badge}</span>
       ) : (
-        <span className={`font-mono text-right break-all max-w-[60%] ${color ?? 'text-white/70'}`}>{value}</span>
+        <span className={`font-mono text-right break-all max-w-[60%] ${color ?? 'text-[color:rgb(var(--fg-rgb)/0.7)]'}`}>{value}</span>
       )}
     </div>
   );
@@ -592,11 +592,11 @@ function lifecycleColor(state: string): string {
 
 function CollapsedSection({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   return (
-    <details className="group rounded-lg border border-white/[0.06] bg-white/[0.02]">
-      <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none hover:bg-white/[0.03]">
-        <ChevronDown className="w-3 h-3 text-white/30 -rotate-90 group-open:rotate-0 transition-transform duration-150" />
-        <span className="text-[11px] font-bold uppercase tracking-widest text-white/50 flex-1">{title}</span>
-        <span className={`text-[11px] font-mono ${count === 0 ? 'text-white/20' : 'text-white/40'}`}>{count}</span>
+    <details className="group rounded-lg border border-[rgb(var(--fg-rgb)/0.06)] bg-[rgb(var(--fg-rgb)/0.02)]">
+      <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none hover:bg-[rgb(var(--fg-rgb)/0.03)]">
+        <ChevronDown className="w-3 h-3 text-[color:rgb(var(--fg-rgb)/0.3)] -rotate-90 group-open:rotate-0 transition-transform duration-150" />
+        <span className="text-[11px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.5)] flex-1">{title}</span>
+        <span className={`text-[11px] font-mono ${count === 0 ? 'text-[color:rgb(var(--fg-rgb)/0.2)]' : 'text-[color:rgb(var(--fg-rgb)/0.4)]'}`}>{count}</span>
       </summary>
       <div className="px-3 pb-2.5">{children}</div>
     </details>

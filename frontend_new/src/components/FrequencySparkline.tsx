@@ -83,7 +83,7 @@ export function FrequencySparkline({ history, health, height = 30 }: SparklinePr
       <canvas
         ref={canvasRef}
         style={{ height }}
-        className="w-full rounded-md bg-black/30 border border-white/[0.05]"
+        className="w-full rounded-md bg-black/30 border border-[rgb(var(--fg-rgb)/0.05)]"
       />
     </div>
   );

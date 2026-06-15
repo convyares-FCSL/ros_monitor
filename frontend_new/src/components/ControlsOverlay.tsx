@@ -30,7 +30,7 @@ export function ControlsOverlay({
       ${open ? 'translate-x-0' : '-translate-x-[calc(100%+12px)]'}`}
       style={{ background: 'var(--menu-bg)', border: `1px solid ${theme.panelBorder}` }}>
       <div className="space-y-1.5">
-        <div className="text-[9px] font-bold uppercase tracking-widest text-white/30 pb-1 border-b border-white/[0.05]">
+        <div className="text-[9px] font-bold uppercase tracking-widest text-[color:rgb(var(--fg-rgb)/0.3)] pb-1 border-b border-[rgb(var(--fg-rgb)/0.05)]">
           Camera
         </div>
         <Hint icon={<MousePointer className="w-3 h-3" />} label="Left drag — orbit" />
@@ -56,8 +56,8 @@ export function ControlsOverlay({
 
 function Hint({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 text-[10px] text-white/35">
-      <span className="text-white/25">{icon}</span>{label}
+    <div className="flex items-center gap-2 text-[10px] text-[color:rgb(var(--fg-rgb)/0.35)]">
+      <span className="text-[color:rgb(var(--fg-rgb)/0.25)]">{icon}</span>{label}
     </div>
   );
 }
@@ -83,7 +83,7 @@ function Btn({ onClick, icon, label, active, activeColor, panelBg, panelBorder }
 
   return (
     <button onClick={onClick}
-      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[10px] font-semibold transition-all backdrop-blur-xl text-white/70 hover:text-white hover:bg-slate-300/[0.14]"
+      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[10px] font-semibold transition-all backdrop-blur-xl text-[color:rgb(var(--fg-rgb)/0.7)] hover:text-[color:rgb(var(--fg-rgb))] hover:bg-slate-300/[0.14]"
       style={{ background: 'rgba(148, 163, 184, 0.12)', border: '1px solid rgba(255,255,255,0.12)' }}>
       {icon}{label}
     </button>

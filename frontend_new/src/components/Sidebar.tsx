@@ -140,7 +140,7 @@ export function Sidebar({
               />
             </>
           ) : (
-            <div className="flex items-center justify-center h-32 text-white/30 text-xs">Waiting for data...</div>
+            <div className="flex items-center justify-center h-32 text-[color:rgb(var(--fg-rgb)/0.3)] text-xs">Waiting for data...</div>
           )}
         </div>
       </aside>
@@ -148,7 +148,7 @@ export function Sidebar({
       <button
         onClick={onToggle}
         className={`absolute z-30 w-6 h-10 flex items-center justify-center
-          backdrop-blur-xl border border-white/[0.08] rounded-r-md
+          backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.08)] rounded-r-md
           hover:opacity-80 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
           ${open ? 'left-[300px]' : 'left-0'}`}
         style={{ top: '88px', background: 'var(--menu-bg)', color: 'var(--menu-text-muted)' }}
@@ -160,7 +160,7 @@ export function Sidebar({
       {contextMenu && (
         <>
           <div className="fixed inset-0 z-50" onClick={closeContext} />
-          <div className="fixed z-50 min-w-[160px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-white/[0.1] shadow-xl"
+          <div className="fixed z-50 min-w-[160px] py-1.5 px-1.5 rounded-lg backdrop-blur-xl border border-[rgb(var(--fg-rgb)/0.1)] shadow-xl"
             style={{ left: contextMenu.x, top: contextMenu.y, background: 'var(--menu-bg)' }}>
             <CtxItem onClick={() => { onToggleItem(contextMenu.id); closeContext(); }}>
               {hiddenItems.has(contextMenu.id) ? 'Show' : 'Hide'}
@@ -181,7 +181,7 @@ export function Sidebar({
 
 function CtxItem({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-white/[0.06] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
+    <button onClick={onClick} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-[rgb(var(--fg-rgb)/0.06)] rounded-md transition-colors" style={{ color: 'var(--menu-text-muted)' }}>
       {children}
     </button>
   );
@@ -233,7 +233,7 @@ function Section({
                 onContextMenu={(e) => onContext(e, item.id, entityType)}
                 className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer
                   border transition-all duration-150 text-[11px] font-mono
-                  ${isSelected ? 'bg-white/[0.08]' : 'border-transparent bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10'}
+                  ${isSelected ? 'bg-[rgb(var(--fg-rgb)/0.08)]' : 'border-transparent bg-[rgb(var(--fg-rgb)/0.02)] hover:bg-[rgb(var(--fg-rgb)/0.04)] hover:border-[rgb(var(--fg-rgb)/0.1)]'}
                   ${isHidden ? 'opacity-35' : ''}`}
                 style={isSelected ? { borderColor: `${colorHex}66` } : undefined}
               >
@@ -256,20 +256,20 @@ function Section({
           {genericItems.length > 0 && (
             <li className="mt-1">
               <details className="group/gen">
-                <summary className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-[10px] text-white/30 hover:bg-white/[0.03] list-none">
+                <summary className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer text-[10px] text-[color:rgb(var(--fg-rgb)/0.3)] hover:bg-[rgb(var(--fg-rgb)/0.03)] list-none">
                   <ChevronRight className="w-3 h-3 transition-transform duration-150 group-open/gen:rotate-90" />
                   <span className="uppercase tracking-widest font-bold flex-1">Built-in ({genericItems.length})</span>
                   <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleGeneric(); }}
-                    className="text-white/20 hover:text-white/50">
+                    className="text-[color:rgb(var(--fg-rgb)/0.2)] hover:text-[color:rgb(var(--fg-rgb)/0.5)]">
                     {genericHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                   </button>
                 </summary>
-                <ul className="ml-3 mt-0.5 border-l border-white/[0.06] pl-2 space-y-0.5">
+                <ul className="ml-3 mt-0.5 border-l border-[rgb(var(--fg-rgb)/0.06)] pl-2 space-y-0.5">
                   {genericItems.map(item => (
                     <li key={item.id}
                       onContextMenu={(e) => onContext(e, item.id, entityType)}
                       title="Right-click to unmark generic"
-                      className="text-[10px] font-mono text-white/25 px-2 py-1 rounded-md hover:bg-white/[0.02] cursor-context-menu">
+                      className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.25)] px-2 py-1 rounded-md hover:bg-[rgb(var(--fg-rgb)/0.02)] cursor-context-menu">
                       {item.label}
                     </li>
                   ))}

@@ -19,7 +19,7 @@ export function TopBar({ title, icon: Icon = Activity, children, onOpenSettings,
   const { theme } = useTheme();
   return (
     <header
-      className="absolute top-0 left-0 right-0 h-14 z-30 flex items-center px-5 backdrop-blur-xl border-b border-white/[0.07]"
+      className="absolute top-0 left-0 right-0 h-14 z-30 flex items-center px-5 backdrop-blur-xl border-b border-[rgb(var(--fg-rgb)/0.07)]"
       style={{ background: `var(--menu-bg, ${theme.headerBg})`, color: 'var(--menu-text, #fff)' }}
     >
       <div className="flex items-center gap-3 shrink-0">
@@ -44,7 +44,7 @@ export function TopBar({ title, icon: Icon = Activity, children, onOpenSettings,
       <div className="flex items-center gap-3 shrink-0">
         {onOpenSettings && (
           <button onClick={onOpenSettings}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition-all">
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-[rgb(var(--fg-rgb)/0.04)] border border-[rgb(var(--fg-rgb)/0.08)] hover:bg-[rgb(var(--fg-rgb)/0.08)] transition-all">
             <SlidersHorizontal className="w-3.5 h-3.5" style={{ color: 'var(--menu-text-muted, rgba(255,255,255,0.55))' }} />
           </button>
         )}
@@ -71,12 +71,12 @@ function ModeBadge() {
   const bt = mode.behavior_tree === 'real'
     ? { t: 'REAL', c: '#10b981' }
     : mode.behavior_tree === 'demo'
-      ? { t: 'DEMO', c: '#06b6d4' }
+      ? { t: 'DEMO', c: '#f59e0b' }
       : mode.behavior_tree === 'auto'
-        ? { t: 'AUTO', c: '#f59e0b' }
+        ? { t: 'AUTO', c: '#06b6d4' }
         : { t: 'OFF', c: '#6b7280' };
   return (
-    <div className="hidden lg:flex items-center gap-2 ml-1 pl-3 border-l border-white/10"
+    <div className="hidden lg:flex items-center gap-2 ml-1 pl-3 border-l border-[rgb(var(--fg-rgb)/0.1)]"
       title="Bridge run mode — MODE = top-level launcher mode, INSP = 3D introspection, BT = behavior tree">
       <Chip label="MODE" value={topLevel.t} color={topLevel.c} />
       <Chip label="INSP" value={insp.t} color={insp.c} />
@@ -88,7 +88,7 @@ function ModeBadge() {
 function Chip({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <span className="flex items-center gap-1 text-[9px] font-mono">
-      <span className="text-white/35">{label}</span>
+      <span className="text-[color:rgb(var(--fg-rgb)/0.35)]">{label}</span>
       <span className="px-1.5 py-0.5 rounded font-bold" style={{ color, background: `${color}22` }}>{value}</span>
     </span>
   );
