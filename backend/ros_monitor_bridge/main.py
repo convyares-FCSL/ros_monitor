@@ -16,7 +16,7 @@ from ros_monitor_bridge.config import (
 from ros_monitor_bridge.ros_bridge import ROS_AVAILABLE, run_ros2_node
 from ros_monitor_bridge.runtime import BridgeRuntime
 from ros_monitor_bridge.bt_simulation import BTSimulation
-from ros_monitor_bridge.btros_bridge import DEFAULT_GROOT_PORT, BTRosBridge
+from ros_monitor_bridge.btros_bridge import DEFAULT_GROOT_PORT, GROOT_NODES, BTRosBridge
 from ros_monitor_bridge.simulation import SimulatedBridge
 from ros_monitor_bridge.utils import RateLimiter
 
@@ -40,6 +40,16 @@ class ResolvedRunMode:
             "behavior_tree": self.behavior_tree,
             "bt_endpoint": self.btros,
         }
+
+
+def _resolve_groot_ports() -> dict[str, int]:
+    """Return label→port map, overriding defaults from GROOT_PORT_<LABEL> env vars."""
+    ports = dict(GROOT_NODES)
+    for label in ports:
+        val = os.environ.get(f"GROOT_PORT_{label.upper()}")
+        if val:
+            ports[label] = int(val)
+    return ports
 
 
 def main():
@@ -148,7 +158,10 @@ def _log_run_mode(logger, run_mode: ResolvedRunMode):
     bt = {
         "real": f"REAL (Groot2 {run_mode.btros})",
         "demo": "DEMO (bt_simulation)",
-        "auto": "AUTO (probing localhost:1667 for a Groot2 executor)",
+        "auto": "AUTO (probing {} Groot2 executors: {})".format(
+            len(GROOT_NODES),
+            ', '.join(f'{k}:{v}' for k, v in GROOT_NODES.items()),
+        ),
         "off": "OFF (--no-bt)",
     }[run_mode.behavior_tree]
     bar = "=" * 64
@@ -213,20 +226,24 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
             bt_sim = BTSimulation(runtime, logger)
             bt_sim.start()
 
-        bt_ros = None
+        bt_bridges: list[BTRosBridge] = []
         if config.no_bt:
-            bt_ros = None
+            pass
         elif config.btros:
             host, _, port = config.btros.partition(":")
-            bt_ros = BTRosBridge(runtime, logger, host=host or "localhost",
-                                 port=int(port) if port else DEFAULT_GROOT_PORT)
-            bt_ros.start()
+            b = BTRosBridge(runtime, logger, host=host or "localhost",
+                            port=int(port) if port else DEFAULT_GROOT_PORT,
+                            label="custom")
+            b.start()
+            bt_bridges.append(b)
         elif not config.bt_mode:
-            # No explicit BT source — auto-probe a local Groot2 executor so that
-            # running with no args still picks up a live tree if one is present.
-            bt_ros = BTRosBridge(runtime, logger, host="localhost",
-                                 port=DEFAULT_GROOT_PORT, quiet=True)
-            bt_ros.start()
+            # Auto-probe each named executor. quiet=True so absent nodes don't
+            # spam the log — connections (when they succeed) are still logged.
+            for label, port in _resolve_groot_ports().items():
+                b = BTRosBridge(runtime, logger, host="localhost", port=port,
+                                label=label, quiet=True)
+                b.start()
+                bt_bridges.append(b)
 
         try:
             await asyncio.Future()
@@ -241,8 +258,8 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
                     ros_thread.join(timeout=3.0)
             if bt_sim is not None:
                 bt_sim.stop()
-            if bt_ros is not None:
-                bt_ros.stop()
+            for b in bt_bridges:
+                b.stop()
             mode_task.cancel()
             broadcaster_task.cancel()
 

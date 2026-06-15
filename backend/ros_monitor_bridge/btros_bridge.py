@@ -29,7 +29,21 @@ import xml.etree.ElementTree as ET
 
 # --- Groot2 protocol --------------------------------------------------------
 PROTOCOL_ID = 2
-DEFAULT_GROOT_PORT = 1667
+
+# Named executors and their default Groot2 REP ports. Each can be overridden
+# via env var GROOT_PORT_<LABEL_UPPER> (e.g. GROOT_PORT_LIFECYCLE=1667).
+GROOT_NODES: dict[str, int] = {
+    'lifecycle':    1667,
+    'system':       1669,
+    'orchestrator': 1671,
+    'compressor':   1673,
+    'low_booster':  1675,
+    'high_booster': 1677,
+    'gas_manager':  1679,
+    'dispenser':    1681,
+}
+
+DEFAULT_GROOT_PORT = next(iter(GROOT_NODES.values()))  # backward-compat alias
 
 REQ_FULLTREE = ord('T')
 REQ_STATUS = ord('S')
@@ -203,11 +217,12 @@ class BTRosBridge:
     """Polls a Groot2 v4 executor and forwards bt_blueprint / bt_delta events."""
 
     def __init__(self, runtime, logger, host='localhost', port=DEFAULT_GROOT_PORT,
-                 status_hz=15.0, blueprint_reemit_s=3.0, quiet=False):
+                 status_hz=15.0, blueprint_reemit_s=3.0, quiet=False, label=None):
         self.runtime = runtime
         self.logger = logger
         self.host = host
         self.port = port
+        self.label = label
         self.status_period = 1.0 / status_hz
         self.blueprint_reemit_s = blueprint_reemit_s
         # quiet = auto-probe mode: don't warn on every failed connection attempt
@@ -278,8 +293,10 @@ class BTRosBridge:
         known_ids = {n['id'] for n in blueprint['nodes']}
         self.runtime.dispatch_event({
             "type": "bt_blueprint", "timestamp": time.time(), "data": blueprint,
+            "source": self.label,
         })
-        self.logger.info(f"BTRos: tree '{blueprint['tree_id']}' with {len(known_ids)} nodes")
+        prefix = f"[{self.label}] " if self.label else ""
+        self.logger.info(f"BTRos: {prefix}tree '{blueprint['tree_id']}' with {len(known_ids)} nodes")
 
         last_status = {}
         last_blueprint = time.time()
@@ -290,6 +307,7 @@ class BTRosBridge:
             if now - last_blueprint >= self.blueprint_reemit_s:
                 self.runtime.dispatch_event({
                     "type": "bt_blueprint", "timestamp": now, "data": blueprint,
+                    "source": self.label,
                 })
                 last_blueprint = now
 
@@ -302,6 +320,7 @@ class BTRosBridge:
                     self.runtime.dispatch_event({
                         "type": "bt_delta", "timestamp": now,
                         "data": {"tree_id": tree_id, "id": uid, "state": state},
+                        "source": self.label,
                     })
             last_status = status
             time.sleep(self.status_period)
