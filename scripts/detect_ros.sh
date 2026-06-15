@@ -20,16 +20,20 @@ _detect_distro() {
 _source_overlays() {
   while IFS= read -r _s; do
     [[ "$_s" == *"/.venv/"* ]] && continue
+    set +u
     # shellcheck disable=SC1090
     source "$_s" 2>/dev/null || true
+    set -u
   done < <(find "$HOME" -maxdepth 5 -name setup.bash -path "*/install/setup.bash" 2>/dev/null | sort)
 }
 
 _ROS=$(_detect_distro)
 if [[ -n "$_ROS" && -f "/opt/ros/$_ROS/setup.bash" ]]; then
   echo "[detect_ros] sourcing /opt/ros/$_ROS"
+  set +u
   # shellcheck disable=SC1090
   source "/opt/ros/$_ROS/setup.bash"
+  set -u
   _source_overlays
 else
   echo "[detect_ros] WARNING: no ROS 2 installation found in /opt/ros/" >&2

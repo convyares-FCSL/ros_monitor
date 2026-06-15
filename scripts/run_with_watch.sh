@@ -14,8 +14,10 @@ VIZ="$ROOT_DIR/scripts/run_visualizer_new.sh"
 if ! command -v inotifywait >/dev/null 2>&1; then
   echo "[watch] inotify-tools not installed — running without workspace watching."
   echo "[watch]   sudo apt install inotify-tools  to enable auto-restart."
+  set +u
   # shellcheck disable=SC1090
   source "$DETECT_ROS"
+  set -u
   exec "$VIZ" "$@"
 fi
 

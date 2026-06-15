@@ -13,4 +13,10 @@ if [[ ! -d "$VENV_DIR" ]]; then
   python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
+# Skip pip if all requirements are already importable — avoids pip's environment
+# scan which fails when system site-packages contain broken editable-install links.
+if "$VENV_DIR/bin/python" -c "import websockets" 2>/dev/null; then
+  exit 0
+fi
+
 "$VENV_DIR/bin/pip" install -r "$ROOT_DIR/requirements.txt"
