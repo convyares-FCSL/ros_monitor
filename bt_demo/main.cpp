@@ -2,13 +2,18 @@
 // the Groot2 protocol (TCP 1667) — a real source for validating btros_bridge.py
 // (the --btros Groot2 client) without needing the mserve / hyfleet stacks.
 //
+// Also writes a timestamped .btlog.db3 SQLite log via SqliteLogger so the
+// VCR replay pipeline can be tested against a locally generated file.
+//
 // Build + run: see bt_demo/README.md (source ROS, cmake, ./bt_demo).
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include <iostream>
 
 #include "behaviortree_cpp/bt_factory.h"
 #include "behaviortree_cpp/loggers/groot2_publisher.h"
+#include "behaviortree_cpp/loggers/bt_sqlite_logger.h"
 
 using namespace BT;
 
@@ -63,6 +68,14 @@ static const char* kTreeXML = R"(
 </root>
 )";
 
+static std::string make_log_path() {
+  std::time_t now = std::time(nullptr);
+  std::tm* t = std::localtime(&now);
+  char buf[64];
+  std::strftime(buf, sizeof(buf), "bt_log_%Y%m%dT%H%M%S.btlog.db3", t);
+  return std::string(buf);
+}
+
 int main() {
   BehaviorTreeFactory factory;
   factory.registerNodeType<IsConnected>("IsConnected");
@@ -70,12 +83,23 @@ int main() {
   factory.registerNodeType<HoldVoltage>("HoldVoltage");
 
   auto tree = factory.createTreeFromText(kTreeXML);
+
+  // Groot2Publisher: ZMQ REP on port 1667 — dashboard live view.
   Groot2Publisher publisher(tree, 1667);
 
+  // SqliteLogger: one row per status change → .btlog.db3 for VCR replay.
+  // Writes are sub-100µs; no impact at 300ms tick rate.
+  const std::string log_path = make_log_path();
+  SqliteLogger sqlite_logger(tree, log_path, /*append=*/false);
+
   std::cout << "bt_demo: ChargeManager publishing on Groot2 port 1667 (Ctrl-C to stop)\n";
+  std::cout << "bt_demo: writing log to " << log_path << "\n";
+
   while (true) {
-    tree.tickOnce();              // re-ticks from the root after each completion
+    tree.tickOnce();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
   }
+
+  // Both loggers flush/close in their destructors (RAII).
   return 0;
 }

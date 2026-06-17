@@ -1,6 +1,6 @@
 import { lazy, useEffect, useState } from 'react';
 import {
-  Home as HomeIcon, Boxes, Workflow, ScrollText, Settings as SettingsIcon,
+  Home as HomeIcon, Boxes, Workflow, ScrollText, Settings as SettingsIcon, LineChart,
   type LucideIcon,
 } from 'lucide-react';
 import { useSettingsStore } from './store/settingsStore';
@@ -20,6 +20,7 @@ export const ROUTES: RouteDef[] = [
   { path: 'home', label: 'Home', icon: HomeIcon, Component: lazy(() => import('./views/Home').then((m) => ({ default: m.Home }))) },
   { path: 'ros', label: 'ROS Introspection', icon: Boxes, Component: lazy(() => import('./views/RosIntrospection').then((m) => ({ default: m.RosIntrospection }))) },
   { path: 'bt', label: 'Behavior Tree', icon: Workflow, Component: lazy(() => import('./views/BehaviorTree').then((m) => ({ default: m.BehaviorTree }))) },
+  { path: 'telemetry', label: 'Telemetry', icon: LineChart, Component: lazy(() => import('./views/Telemetry').then((m) => ({ default: m.Telemetry }))) },
   { path: 'logging', label: 'Logging', icon: ScrollText, Component: lazy(() => import('./views/Logging').then((m) => ({ default: m.Logging }))) },
   { path: 'settings', label: 'Settings', icon: SettingsIcon, Component: lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings }))) },
 ];

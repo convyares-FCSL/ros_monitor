@@ -140,3 +140,9 @@ export function subscribeToBridgeFrames(listener: FrameListener) {
     listeners.delete(listener);
   };
 }
+
+export function sendFrame(msg: object): void {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(msg));
+  }
+}

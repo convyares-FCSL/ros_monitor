@@ -267,6 +267,7 @@ export class SceneManager {
   private handleResize = () => {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -1048,6 +1049,7 @@ export class SceneManager {
   }
 
   private tick() {
+    if (this.renderer.domElement.width === 0 || this.renderer.domElement.height === 0) return;
     this.layout.step();
     this.computeVisibility();
     this.updateOutlineObjects();

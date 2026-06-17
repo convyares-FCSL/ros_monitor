@@ -26,4 +26,5 @@ class BridgeConfig:
     sim_mode: bool = False
     bt_mode: bool = False
     no_bt: bool = False
-    btros: str | None = None  # "HOST[:PORT]" of a live Groot2 v4 executor
+    btros: str | None = None        # "HOST[:PORT]" of a live Groot2 v4 executor
+    replay_file: str | None = None  # path to a .btlog.db3 for VCR replay mode

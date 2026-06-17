@@ -8,5 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # so CMAKE_PREFIX_PATH points at it).
 find_package(behaviortree_cpp REQUIRED)
 
+find_package(SQLite3 REQUIRED)
+
 add_executable(bt_demo main.cpp)
-target_link_libraries(bt_demo behaviortree_cpp::behaviortree_cpp)
+target_link_libraries(bt_demo behaviortree_cpp::behaviortree_cpp ${SQLite3_LIBRARIES})
+target_include_directories(bt_demo PRIVATE ${SQLite3_INCLUDE_DIRS})

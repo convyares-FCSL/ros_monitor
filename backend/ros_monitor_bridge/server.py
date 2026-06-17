@@ -59,7 +59,8 @@ def create_ws_handler(runtime, logger):
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    logger.info(f"Received from client {addr}: {data}")
+                    if not runtime.handle_control(data, logger):
+                        logger.info(f"Received from client {addr}: {data}")
                 except json.JSONDecodeError:
                     logger.warning("Received invalid JSON from client.")
         except websockets.exceptions.ConnectionClosedOK:

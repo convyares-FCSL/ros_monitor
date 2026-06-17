@@ -10,6 +10,8 @@ import { BTCanvas, type BTCanvasHandle } from '../bt/BTCanvas';
 import { BTInspector } from '../bt/BTInspector';
 import { TreeExplorer } from '../bt/TreeExplorer';
 import { BTControls } from '../bt/BTControls';
+import { BTReplayScrubber } from '../bt/BTReplayScrubber';
+import { useReplayStore } from '../store/replayStore';
 
 const CONN_STYLE: Record<BtConnStatus, { label: string; cls: string }> = {
   connecting: { label: 'CONNECTING', cls: 'bg-amber-400' },
@@ -24,6 +26,7 @@ export function BehaviorTree() {
   const [contextMenu, setContextMenu] = useState<{ nodeId: number | null; x: number; y: number } | null>(null);
   const [xmlOpen, setXmlOpen] = useState(false);
   const conn = useBtSocket(paused);
+  const isReplay = useReplayStore((s) => s.isReplay);
   const canvasRef = useRef<BTCanvasHandle>(null);
   const nodesById = useActiveNodesById();
   const collapsed = useBtStore((s) => s.collapsed);
@@ -69,14 +72,22 @@ export function BehaviorTree() {
       {/* Right: blackboard + node inspector */}
       <BTInspector />
 
-      {/* Legend */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-4 px-4 py-2 rounded-xl backdrop-blur-2xl border text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)]"
-        style={{ background: 'var(--menu-bg, rgba(15,23,42,0.85))', borderColor: 'rgba(255,255,255,0.08)' }}>
+      {/* Legend — moves up when the replay scrubber is visible */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 z-20 flex gap-4 px-4 py-2 rounded-xl backdrop-blur-2xl border text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)] transition-all duration-300"
+        style={{
+          bottom: isReplay ? '5.5rem' : '0.75rem',
+          background: 'var(--menu-bg, rgba(15,23,42,0.85))',
+          borderColor: 'rgba(255,255,255,0.08)',
+        }}
+      >
         <Legend color="#475569" label="IDLE" />
         <Legend color="#06b6d4" label="RUNNING" />
         <Legend color="#10b981" label="SUCCESS" />
         <Legend color="#ef4444" label="FAILURE" />
       </div>
+
+      {isReplay && <BTReplayScrubber />}
 
       {contextMenu && (
         <>

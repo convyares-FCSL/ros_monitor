@@ -16,6 +16,7 @@ from ros_monitor_bridge.config import (
 from ros_monitor_bridge.ros_bridge import ROS_AVAILABLE, run_ros2_node
 from ros_monitor_bridge.runtime import BridgeRuntime
 from ros_monitor_bridge.bt_simulation import BTSimulation
+from ros_monitor_bridge.bt_replay import BTReplay
 from ros_monitor_bridge.btros_bridge import DEFAULT_GROOT_PORT, GROOT_NODES, BTRosBridge
 from ros_monitor_bridge.simulation import SimulatedBridge
 from ros_monitor_bridge.utils import RateLimiter
@@ -57,6 +58,10 @@ def main():
     logger = logging.getLogger("ROS2Bridge")
 
     args = parse_args()
+    # Resolve replay path before async_main starts the HTTP server thread,
+    # which calls os.chdir(frontend_dir) and would corrupt relative paths.
+    if args.replay:
+        args.replay = os.path.abspath(args.replay)
     frontend_dir = resolve_frontend_dir()
     run_mode = resolve_run_mode(args)
 
@@ -71,6 +76,7 @@ def main():
         bt_mode=run_mode.use_internal_bt_demo,
         no_bt=run_mode.behavior_tree == "off",
         btros=run_mode.btros,
+        replay_file=args.replay,
     )
 
     for warning in run_mode.warnings:
@@ -222,12 +228,19 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
         # The BT data sources are independent: they run alongside either the ROS
         # bridge or the simulation.
         bt_sim = None
-        if config.bt_mode:
+        if config.bt_mode and not config.replay_file:
             bt_sim = BTSimulation(runtime, logger)
             bt_sim.start()
 
+        # VCR replay mode: stream a .btlog.db3 instead of any live BT source.
+        if config.replay_file:
+            replayer = BTReplay(runtime, logger, config.replay_file)
+            runtime.replay_controller = replayer
+            replayer.start()
+            logger.info(f"Replay mode: {config.replay_file}")
+
         bt_bridges: list[BTRosBridge] = []
-        if config.no_bt:
+        if config.replay_file or config.no_bt:
             pass
         elif config.btros:
             host, _, port = config.btros.partition(":")
@@ -260,6 +273,8 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
                 bt_sim.stop()
             for b in bt_bridges:
                 b.stop()
+            if config.replay_file and runtime.replay_controller:
+                runtime.replay_controller.stop()
             mode_task.cancel()
             broadcaster_task.cancel()
 
@@ -311,6 +326,13 @@ def parse_args(argv=None):
         type=float,
         default=DEFAULT_RATE_LIMIT_HZ,
         help="Throttling rate for messages (Hz)",
+    )
+    parser.add_argument(
+        "--replay",
+        type=str,
+        default=None,
+        metavar="FILE.btlog.db3",
+        help="Replay a .btlog.db3 file instead of connecting to a live BT executor",
     )
     return parser.parse_args(argv)
 

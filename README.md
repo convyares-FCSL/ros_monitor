@@ -1,12 +1,17 @@
 # ROS 2 Diagnostic Platform
 
-A browser-based diagnostic dashboard for ROS 2 systems. A Python bridge streams live
-data to a React app over WebSockets; no ROS tooling is needed in the browser.
+A browser-based diagnostic dashboard for ROS 2 systems. A Python bridge streams
+live data to a React app over WebSockets — no ROS tooling or plugin needed in the
+browser.
 
-- **ROS Introspection** — real-time 3D view of the ROS 2 graph (nodes, topics,
-  services, actions) with live telemetry.
-- **Behavior Tree** — Unreal-style visualizer for BehaviorTree.CPP v4 trees (live
-  status, blackboard, port remappings), fed by the demo emitter or a real Groot2 executor.
+| View | What it does |
+|---|---|
+| **ROS Introspection** | Real-time 3D graph of nodes, topics, services, and actions with live telemetry particles and Hz tracking |
+| **Behavior Tree** | Unreal-style BT.CPP v4 visualizer — live node states, blackboard, port remappings, multi-tree explorer |
+| **BT Replay** | Scrub, seek, and play back recorded `.btlog` files with a density histogram and variable speed |
+| **Telemetry** | uPlot canvas chart — record any ROS topic field or blackboard variable, pan/zoom, CSV export |
+| **Logging** | Live `/rosout` console with level filter, search, and payload capture |
+| **Settings** | WS endpoint, theme, telemetry rate limits, per-view defaults — persisted to `localStorage` |
 
 ---
 
@@ -37,14 +42,10 @@ single run without it.
 ./scripts/run_visualizer_new.sh
 ```
 
-Then open:
+Then open `http://localhost:7260`.
 
-```text
-http://localhost:7260
-```
-
-The default mode is `full`, which connects to the live ROS 2 graph and auto-probes
-for a BT/Groot2 publisher.
+The default mode is `full` — connects to the live ROS 2 graph and auto-probes for
+a BT/Groot2 publisher.
 
 ---
 
@@ -65,13 +66,13 @@ for a BT/Groot2 publisher.
 Useful variants:
 
 ```bash
-# Full mode with explicit BT endpoint
+# Full mode with an explicit BT endpoint
 ./scripts/run_with_watch.sh --mode full --btros localhost:1667
 
-# Demo ROS only (no BT)
+# Demo: ROS nodes only (no BT)
 ./scripts/run_with_watch.sh --mode demo --no-bt
 
-# Demo BT only
+# Demo: BT only
 ./scripts/run_with_watch.sh --mode demo --no-ros-demo
 
 # Faster restart — reuse existing frontend build
@@ -82,16 +83,53 @@ Useful variants:
 
 ## ROS auto-detection
 
-`scripts/detect_ros.sh` is a sourceable script that finds the installed ROS 2 distro
-and sources all colcon overlay workspaces under `$HOME` automatically. Add it to
-`~/.bashrc` to auto-source on every new terminal:
+`scripts/detect_ros.sh` finds the installed ROS 2 distro and sources all colcon
+overlay workspaces under `$HOME` automatically. Add it to `~/.bashrc` to
+auto-source on every new terminal:
 
 ```bash
 source /path/to/ros_monitor/scripts/detect_ros.sh 2>/dev/null || true
 ```
 
-It checks distros in order: `jazzy → iron → humble → rolling`, honours a pre-set
+Checks distros in order: `jazzy → iron → humble → rolling`, honours a pre-set
 `$ROS_DISTRO`, and skips `.venv/` paths.
+
+---
+
+## Connecting a real Behavior Tree
+
+The BT view connects to the **Groot2Publisher** built into BehaviorTree.CPP v4.
+Enable it in your node:
+
+```cpp
+#include <behaviortree_cpp/loggers/groot2_publisher.h>
+
+// After the tree is created (on_configure or similar):
+declare_parameter("groot_port", 1667);
+const int port = get_parameter("groot_port").as_int();
+groot_publisher_ = std::make_unique<BT::Groot2Publisher>(tree_, port);
+```
+
+Build with `-DBTCPP_GROOT_INTERFACE=ON`. Each executor should use a distinct port.
+The bridge auto-probes `localhost:1667` in `full` mode, or use `--btros host:port`
+to target a specific executor.
+
+See **[bt_demo/README.md](bt_demo/README.md)** for the full standalone C++ demo.
+
+---
+
+## Telemetry quick-start
+
+1. Navigate to the **Telemetry** tab.
+2. Add a series — type a topic name (e.g. `/diagnostics`) and an optional field
+   dot-path (e.g. `status.0.level`), or pick a blackboard variable from the
+   **Blackboard** panel (appears automatically when a BT tree is running).
+3. Press **Start**. The chart fills left-to-right for the first 10 minutes, then
+   rolls as a live 10-minute window.
+4. Scroll to zoom, drag to pan, click **↺ Live** or double-click the chart to snap
+   back to live view.
+5. Use the **Y Axes** section in the sidebar to pin left/right axis ranges.
+6. Click the download icon to export all recorded series as a CSV.
 
 ---
 
@@ -101,7 +139,7 @@ It checks distros in order: `jazzy → iron → humble → rolling`, honours a p
 |---|---|
 | [backend/](backend/) | Python `rclpy` + `websockets` bridge (`ros_monitor_bridge`) |
 | [frontend_new/](frontend_new/) | React 18 + TS + Vite + Tailwind app (production frontend) |
-| [frontend/](frontend/) | Vanilla JS + Three.js reference frontend + BT prototype |
+| [frontend/](frontend/) | Vanilla JS + Three.js reference frontend |
 | [bt_demo/](bt_demo/) | Standalone C++ BehaviorTree.CPP v4 + Groot2 demo |
 | [ros2_demo_ws/](ros2_demo_ws/) | Bundled demo ROS 2 package (`monitor_demo`) |
 | [scripts/](scripts/) | Launch, build, and environment scripts |
@@ -114,5 +152,18 @@ It checks distros in order: `jazzy → iron → humble → rolling`, honours a p
 - **[INSTALLATION.md](INSTALLATION.md)** — full setup guide for a fresh machine.
 - **[docs/README.md](docs/README.md)** — architecture, run modes, WebSocket protocol.
 - **[docs/walkthrough.md](docs/walkthrough.md)** — how the system was built, layer by layer.
-- **[docs/bt_visualizer_plan.md](docs/bt_visualizer_plan.md)** — Behavior Tree visualizer plan + progress.
-- **[bt_demo/README.md](bt_demo/README.md)** — building/running the real Groot2 demo.
+- **[bt_demo/README.md](bt_demo/README.md)** — building and running the real Groot2 C++ demo.
+
+---
+
+## Potential next steps
+
+These are the natural extension points if the platform grows:
+
+- **Topic autocomplete in Telemetry** — feed the live `graph_update` topic list into the series-add input so the user doesn't have to type topic names manually.
+- **BT Replay keyboard shortcuts** — space bar for play/pause, left/right arrow for frame-step.
+- **Persistent Telemetry layout** — save the current series list and axis config to `localStorage` so the chart survives a page refresh.
+- **Multi-executor BT** — the bridge already auto-discovers multiple Groot2 ports; the frontend tree-explorer panel supports switching trees, but there is no UI to add/remove executor endpoints at runtime without restarting the bridge.
+- **Alert rules** — threshold triggers on Telemetry series (e.g. topic Hz drops below 5 Hz, or a blackboard variable exceeds a value) that surface in the Logging console.
+- **Recording to file** — a bridge-side option to write all streamed events to a `.jsonl` file for post-session replay (similar to the existing BT replay but for the full dashboard).
+- **Mobile / tablet layout** — the current layout targets widescreen. A responsive breakpoint for the nav sidebar would make it usable on a tablet mounted on a robot.

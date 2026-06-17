@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useBtStore } from '../store/btStore';
 import { useUIStore, type BridgeMode } from '../store/uiStore';
+import { useReplayStore, type ReplayStatusData } from '../store/replayStore';
 import type { BTBlueprint } from '../bt/types';
 import { startBridgeConnection, subscribeToBridgeFrames, useBridgeConnectionStore } from '../bridge/connection';
 
@@ -44,6 +45,9 @@ export function useBtSocket(paused = false): BtConnStatus {
           setBlackboard(resolveTree(data.tree_id ?? data.scope), data.vars);
           break;
         }
+        case 'replay_status':
+          useReplayStore.getState().updateStatus(frame.data as unknown as ReplayStatusData);
+          break;
         case 'bridge_mode':
           useUIStore.getState().setBridgeMode(frame.data as unknown as BridgeMode);
           break;
