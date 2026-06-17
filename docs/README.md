@@ -159,6 +159,84 @@ The launcher and bridge print deprecation warnings when the legacy flags are use
 
 ---
 
+## Enabling Groot2Publisher in your C++ node
+
+The visualizer connects to the **Groot2Publisher** built into BehaviorTree.CPP v4. To expose your tree, add the publisher to your ROS 2 node.
+
+### 1. Build requirement
+
+Your workspace must have BehaviorTree.CPP built with the Groot2 interface enabled:
+
+```bash
+colcon build --cmake-args -DBTCPP_GROOT_INTERFACE=ON
+```
+
+### 2. Header and member
+
+```cpp
+#include <behaviortree_cpp/loggers/groot2_publisher.h>
+
+// In your node class:
+std::unique_ptr<BT::Groot2Publisher> groot_publisher_;
+```
+
+### 3. Start the publisher after the tree is created
+
+```cpp
+// Declare the parameter (e.g. in your constructor or on_configure):
+declare_parameter("groot_port", 1667);
+
+// One Groot2 publisher for the whole tree
+const int port = static_cast<int>(get_parameter("groot_port").as_int());
+if (port > 0) {
+  try {
+    groot_publisher_ = std::make_unique<BT::Groot2Publisher>(tree_, static_cast<unsigned>(port));
+    RCLCPP_INFO(get_logger(), "Groot2 publisher listening on port %d", port);
+  } catch (const std::exception & e) {
+    RCLCPP_WARN(get_logger(), "Groot2 publisher disabled: %s", e.what());
+    groot_publisher_.reset();
+  }
+}
+```
+
+The publisher binds a ZeroMQ REP socket on the given port. The visualizer connects to it automatically in `full` mode (default probe: `localhost:1667`) or via `--btros host:port`.
+
+### 4. Port conventions
+
+Each executor should use a distinct port to avoid conflicts. The bridge uses this default mapping:
+
+| Executor | Default port |
+|---|---|
+| lifecycle | 1667 |
+| system | 1669 |
+| orchestrator | 1671 |
+| compressor | 1673 |
+| low_booster | 1675 |
+| high_booster | 1677 |
+| gas_manager | 1679 |
+| dispenser | 1681 |
+
+Override at launch time:
+
+```bash
+ros2 run my_pkg my_node --ros-args -p groot_port:=1669
+```
+
+### 5. Connect the visualizer
+
+```bash
+# Auto-probe localhost:1667
+./scripts/run_visualizer_new.sh --mode full
+
+# Explicit port
+./scripts/run_visualizer_new.sh --mode full --btros localhost:1669
+
+# Disable BT entirely (ROS graph only)
+./scripts/run_visualizer_new.sh --mode full --no-bt
+```
+
+---
+
 ## Frontends
 
 Both frontends speak the same WebSocket protocol (port `8765`) and are served by
