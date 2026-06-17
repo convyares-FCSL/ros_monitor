@@ -40,6 +40,8 @@ export interface NodeBox {
 
 export interface Wire {
   childId: number;
+  /** Ids of decorators folded into the child block (for wire active-state check). */
+  decoratorIds: number[];
   d: string;
 }
 
@@ -133,8 +135,10 @@ export function computeLayout(bp: BTBlueprint, collapsed: Set<number>): BTLayout
       const cx = cb.x + cb.w / 2;
       const cTop = cb.y;
       const midY = pBottom + (cTop - pBottom) / 2;
+      const childNode = byId.get(childId);
+      const decoratorIds = childNode?.decorators.map((d) => d.id) ?? [];
       // Orthogonal: down to a shared mid-rail, across, down to the child top.
-      wires.push({ childId, d: `M ${px} ${pBottom} V ${midY} H ${cx} V ${cTop}` });
+      wires.push({ childId, decoratorIds, d: `M ${px} ${pBottom} V ${midY} H ${cx} V ${cTop}` });
     }
   }
 

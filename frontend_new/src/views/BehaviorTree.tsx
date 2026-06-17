@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Workflow, ChevronDown, GitBranch, FileCode2, X, Copy, Check, Boxes, CircleDot, CheckCircle2, XCircle } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { useBtSocket, type BtConnStatus } from '../hooks/useBtSocket';
 import { useBtStore, useTreeIds, useActiveBlueprint, useActiveNodesById, useActiveStatusCounts } from '../store/btStore';
 import type { BTBlueprint, BTNodeDef, BTDecorator } from '../bt/types';
+import { NODE_TOOLTIPS, CATEGORY_TOOLTIPS } from '../bt/BTNode';
 import { TopBar } from '../components/TopBar';
 import { Stat } from '../components/StatChip';
 import { BTCanvas, type BTCanvasHandle } from '../bt/BTCanvas';
@@ -24,6 +26,7 @@ export function BehaviorTree() {
   const [paused, setPaused] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ nodeId: number | null; x: number; y: number } | null>(null);
+  const [helpTooltip, setHelpTooltip] = useState<{ nodeId: number; x: number; y: number } | null>(null);
   const [xmlOpen, setXmlOpen] = useState(false);
   const conn = useBtSocket(paused);
   const isReplay = useReplayStore((s) => s.isReplay);
@@ -89,6 +92,62 @@ export function BehaviorTree() {
 
       {isReplay && <BTReplayScrubber />}
 
+      {helpTooltip && (() => {
+        const helpNode = nodesById?.get(helpTooltip.nodeId);
+        if (!helpNode) return null;
+        const desc = NODE_TOOLTIPS[helpNode.type] ?? CATEGORY_TOOLTIPS[helpNode.category] ?? '';
+        const inputs  = Object.entries(helpNode.ports.input  ?? {});
+        const outputs = Object.entries(helpNode.ports.output ?? {});
+        const hasPorts = inputs.length > 0 || outputs.length > 0;
+        return createPortal(
+          <div
+            className="fixed z-[9999] max-w-[300px] rounded-xl shadow-2xl backdrop-blur-xl border text-[11px]"
+            style={{
+              left: Math.min(helpTooltip.x + 12, window.innerWidth - 320),
+              top: Math.max(helpTooltip.y - 12, 8),
+              background: 'rgba(10,18,36,0.97)',
+              borderColor: 'rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.8)',
+            }}
+            onMouseLeave={() => setHelpTooltip(null)}
+          >
+            <div className="px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+              <div className="font-bold text-[13px] text-white">{helpNode.type}</div>
+              <div className="text-[9px] font-mono mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                {helpNode.category} · {helpNode.name !== helpNode.type ? helpNode.name : ''}
+              </div>
+            </div>
+            {desc && (
+              <div className="px-4 py-2.5 leading-relaxed" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                {desc}
+              </div>
+            )}
+            {hasPorts && (
+              <div className="px-4 pb-3 pt-1 flex flex-col gap-0.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="text-[9px] font-bold tracking-widest mb-1" style={{ color: 'rgba(255,255,255,0.3)' }}>PORTS</div>
+                {inputs.map(([k, v]) => (
+                  <div key={`in-${k}`} className="flex items-center gap-1.5 font-mono text-[10px]">
+                    <span className="text-sky-400 shrink-0">in</span>
+                    <span style={{ color: 'rgba(255,255,255,0.5)' }}>{k}</span>
+                    <span style={{ color: 'rgba(255,255,255,0.25)' }}>→</span>
+                    <span className="text-cyan-300 truncate">{v}</span>
+                  </div>
+                ))}
+                {outputs.map(([k, v]) => (
+                  <div key={`out-${k}`} className="flex items-center gap-1.5 font-mono text-[10px]">
+                    <span className="text-amber-400 shrink-0">out</span>
+                    <span style={{ color: 'rgba(255,255,255,0.5)' }}>{k}</span>
+                    <span style={{ color: 'rgba(255,255,255,0.25)' }}>→</span>
+                    <span className="text-cyan-300 truncate">{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>,
+          document.body,
+        );
+      })()}
+
       {contextMenu && (
         <>
           <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
@@ -110,6 +169,12 @@ export function BehaviorTree() {
                   setContextMenu(null);
                 }}>
                   Inspect
+                </SceneCtxItem>
+                <SceneCtxItem onClick={() => {
+                  setHelpTooltip({ nodeId: contextNode.id, x: contextMenu.x, y: contextMenu.y });
+                  setContextMenu(null);
+                }}>
+                  Help
                 </SceneCtxItem>
                 {contextHasChildren && (
                   <SceneCtxItem onClick={() => {

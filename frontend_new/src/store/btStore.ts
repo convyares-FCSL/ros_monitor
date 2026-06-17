@@ -44,7 +44,12 @@ export const useBtStore = create<BTState>((set) => ({
     const tree: TreeState = {
       blueprint: bp,
       nodesById: new Map(bp.nodes.map((n) => [n.id, n])),
-      statusById: Object.fromEntries(bp.nodes.map((n) => [n.id, 'IDLE'])) as Record<number, NodeStatus>,
+      // Include decorator ids so Precondition / Timeout / Retry caps track their
+      // own status independently from the core node they wrap.
+      statusById: Object.fromEntries([
+        ...bp.nodes.map((n) => [n.id, 'IDLE' as NodeStatus]),
+        ...bp.nodes.flatMap((n) => n.decorators.map((d) => [d.id, 'IDLE' as NodeStatus])),
+      ]) as Record<number, NodeStatus>,
       blackboard: existing?.blackboard ?? {},
       blackboardTouched: existing?.blackboardTouched ?? {},
     };

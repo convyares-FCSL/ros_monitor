@@ -327,7 +327,14 @@ class BTRosBridge:
             raise RuntimeError("no FULLTREE reply")
         blueprint = parse_tree_xml(xml_payload.decode('utf-8'))
         tree_id = blueprint['tree_id']
-        known_ids = {n['id'] for n in blueprint['nodes']}
+        # Include decorator uids so their status deltas aren't filtered out.
+        # Decorators (Precondition, Timeout, Retry, etc.) get their own uid in
+        # the Groot2 STATUS payload and need to be tracked independently.
+        known_ids: set[int] = set()
+        for n in blueprint['nodes']:
+            known_ids.add(n['id'])
+            for dec in n.get('decorators', []):
+                known_ids.add(dec['id'])
         self._emit_blueprint_and_skeleton(blueprint, time.time())
         prefix = f"[{self.label}] " if self.label else ""
         self.logger.info(f"BTRos: {prefix}tree '{blueprint['tree_id']}' with {len(known_ids)} nodes")

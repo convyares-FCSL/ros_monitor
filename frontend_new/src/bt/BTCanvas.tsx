@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { useBtStore, useActiveBlueprint, useNodeStatus } from '../store/btStore';
+import { useBtStore, useActiveBlueprint } from '../store/btStore';
 import { computeLayout, type BTLayout } from './layout';
 import { BTNode } from './BTNode';
 
@@ -14,11 +14,18 @@ interface BTCanvasProps {
   onCanvasContextMenu?: (x: number, y: number) => void;
 }
 
-// A single parent→child connector. Subscribes to the child's status so only the
-// live (RUNNING) path animates, and a delta repaints just this wire.
-function BTWire({ childId, d }: { childId: number; d: string }) {
-  const status = useNodeStatus(childId);
-  return <path d={d} className={`bt-wire ${status === 'RUNNING' ? 'bt-wire-running' : ''}`} />;
+// A single parent→child connector.
+// The wire lights up when the child's core OR any of its decorator caps is
+// RUNNING — so a Precondition holding (RUNNING) while its child is IDLE still
+// shows the path as active.
+function BTWire({ childId, decoratorIds, d }: { childId: number; decoratorIds: number[]; d: string }) {
+  const active = useBtStore((s) => {
+    const tree = s.activeTreeId ? s.trees[s.activeTreeId] : undefined;
+    if (!tree) return false;
+    if (tree.statusById[childId] === 'RUNNING') return true;
+    return decoratorIds.some((did) => tree.statusById[did] === 'RUNNING');
+  });
+  return <path d={d} className={`bt-wire ${active ? 'bt-wire-running' : ''}`} />;
 }
 
 interface View { x: number; y: number; scale: number }
@@ -156,7 +163,7 @@ export const BTCanvas = forwardRef<BTCanvasHandle, BTCanvasProps>(function BTCan
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="absolute top-0 left-0 overflow-visible" width={layout.width} height={layout.height}
             style={{ pointerEvents: 'none' }}>
-            {layout.wires.map((w) => <BTWire key={w.childId} childId={w.childId} d={w.d} />)}
+            {layout.wires.map((w) => <BTWire key={w.childId} childId={w.childId} decoratorIds={w.decoratorIds} d={w.d} />)}
           </svg>
           {[...layout.boxes.values()].map((box) => <BTNode key={box.id} box={box} onContextMenu={props.onNodeContextMenu} />)}
         </div>

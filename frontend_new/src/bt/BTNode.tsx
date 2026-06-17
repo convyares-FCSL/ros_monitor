@@ -1,5 +1,3 @@
-import { useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useBtStore, useNodeDef, useNodeStatus } from '../store/btStore';
 import { CAP_H, SVC_H, STAMP_TYPES, type NodeBox } from './layout';
 import type { BTDecorator, BTNodeDef, NodeCategory, NodeStatus } from './types';
@@ -52,8 +50,7 @@ function portSubLabel(node: BTNodeDef): string | null {
   return raw.startsWith('{') && raw.endsWith('}') ? raw.slice(1, -1) : raw;
 }
 
-// Tooltip descriptions shown after 5 s hover.
-const NODE_TOOLTIPS: Record<string, string> = {
+export const NODE_TOOLTIPS: Record<string, string> = {
   Sequence: 'Runs children left→right. Stops on first FAILURE. Succeeds only if all children succeed.',
   ReactiveSequence: 'Like Sequence but re-ticks all children from the start every cycle, reacting to condition changes.',
   Fallback: 'Runs children left→right. Stops on first SUCCESS. Fails only if all children fail.',
@@ -70,7 +67,7 @@ const NODE_TOOLTIPS: Record<string, string> = {
   SetBlackboard: 'Writes a constant value to a blackboard key. Always returns SUCCESS.',
 };
 
-const CATEGORY_TOOLTIPS: Record<string, string> = {
+export const CATEGORY_TOOLTIPS: Record<string, string> = {
   action: 'Action node — performs work over one or more ticks, returning SUCCESS, FAILURE, or RUNNING.',
   condition: 'Condition node — instantly checks a predicate, returning SUCCESS or FAILURE.',
   decorator: 'Decorator — wraps a single child, modifying or filtering its result.',
@@ -93,6 +90,50 @@ function decoratorLabel(dec: BTDecorator): string {
   return dec.name;
 }
 
+// Status colours shared between cap and core block.
+const CAP_STATUS_BG: Record<string, string> = {
+  RUNNING: 'rgba(6,182,212,0.12)',
+  SUCCESS: 'rgba(16,185,129,0.10)',
+  FAILURE: 'rgba(239,68,68,0.12)',
+  IDLE:    'var(--menu-bg-solid, rgba(15,23,42,0.95))',
+};
+const CAP_STATUS_BORDER: Record<string, string> = {
+  RUNNING: 'rgba(6,182,212,0.45)',
+  SUCCESS: 'rgba(16,185,129,0.30)',
+  FAILURE: 'rgba(239,68,68,0.40)',
+  IDLE:    'rgb(var(--fg-rgb) / 0.1)',
+};
+const CAP_STATUS_COLOR: Record<string, string> = {
+  RUNNING: '#06b6d4',
+  SUCCESS: '#10b981',
+  FAILURE: '#ef4444',
+  IDLE:    'rgb(var(--fg-rgb) / 0.55)',
+};
+
+// Each decorator cap is its own component so it can subscribe to its own status
+// without re-rendering siblings when only one cap's status changes.
+function DecoratorCap({ dec }: { dec: BTDecorator }) {
+  const status = useNodeStatus(dec.id);
+  return (
+    <div
+      className="flex items-center justify-between px-2 text-[10px] font-mono rounded-t-sm border"
+      style={{
+        height: CAP_H,
+        background: CAP_STATUS_BG[status] ?? CAP_STATUS_BG.IDLE,
+        borderColor: CAP_STATUS_BORDER[status] ?? CAP_STATUS_BORDER.IDLE,
+        color: CAP_STATUS_COLOR[status] ?? CAP_STATUS_COLOR.IDLE,
+      }}
+    >
+      <span className="truncate">{decoratorLabel(dec)}</span>
+      {status !== 'IDLE' && (
+        <span className="text-[8px] font-bold tracking-wider ml-2 shrink-0 opacity-80">
+          {status}
+        </span>
+      )}
+    </div>
+  );
+}
+
 const CORE_CLASS: Record<NodeStatus, string> = {
   IDLE: 'bt-core-idle',
   RUNNING: 'bt-core-running',
@@ -110,12 +151,6 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
   const select = useBtStore((s) => s.select);
   const toggleCollapse = useBtStore((s) => s.toggleCollapse);
 
-  // 5-second hover tooltip — portal to document.body to escape the transformed canvas.
-  const posRef = useRef({ x: 0, y: 0 });
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-
   if (!node) return null;
 
   const sym = nodeSymbol(node.type, node.category);
@@ -123,7 +158,6 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
   const isCond = node.category === 'condition';
   const isStamp = STAMP_TYPES.has(node.type);
   const subLabel = portSubLabel(node);
-  const tooltipText = NODE_TOOLTIPS[node.type] ?? CATEGORY_TOOLTIPS[node.category];
 
   return (
     <>
@@ -141,24 +175,9 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
           e.stopPropagation();
           onContextMenu?.(box.id, e.clientX, e.clientY);
         }}
-        onMouseEnter={() => {
-          timerRef.current = setTimeout(() => {
-            setTooltipPos(posRef.current);
-            setTooltipVisible(true);
-          }, 5000);
-        }}
-        onMouseMove={(e) => { posRef.current = { x: e.clientX, y: e.clientY }; }}
-        onMouseLeave={() => {
-          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-          setTooltipVisible(false);
-        }}
       >
         {node.decorators.map((dec) => (
-          <div key={dec.id}
-            className="flex items-center px-2 text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.55)] border border-[rgb(var(--fg-rgb)/0.1)] rounded-t-sm"
-            style={{ height: CAP_H, background: 'var(--menu-bg-solid, rgba(15,23,42,0.95))' }}>
-            {decoratorLabel(dec)}
-          </div>
+          <DecoratorCap key={dec.id} dec={dec} />
         ))}
 
         {node.services.map((svc) => (
@@ -256,25 +275,6 @@ export function BTNode({ box, onContextMenu }: { box: NodeBox; onContextMenu?: (
         </div>
       </div>
 
-      {/* Tooltip — rendered in document.body via portal to escape the canvas transform. */}
-      {tooltipVisible && tooltipText && createPortal(
-        <div
-          className="fixed z-[9999] pointer-events-none max-w-[280px] px-3 py-2.5 rounded-xl backdrop-blur-xl text-[11px] leading-relaxed shadow-xl"
-          style={{
-            left: tooltipPos.x + 14,
-            top: tooltipPos.y - 70,
-            background: 'rgba(15,23,42,0.97)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: 'rgba(255,255,255,0.8)',
-          }}
-        >
-          <div className="font-semibold text-[12px] mb-1" style={{ color: 'rgba(255,255,255,0.95)' }}>
-            {node.type}
-          </div>
-          <div>{tooltipText}</div>
-        </div>,
-        document.body,
-      )}
     </>
   );
 }

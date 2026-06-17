@@ -476,18 +476,24 @@ def _normalize_action_type(action_type):
 def _find_service_servers(node, raw_nodes, service_name):
     servers = []
     for node_name, node_namespace in raw_nodes:
-        for current_service_name, _ in node.get_service_names_and_types_by_node(node_name, node_namespace):
-            if current_service_name == service_name:
-                servers.append(node_name)
-                break
+        try:
+            for current_service_name, _ in node.get_service_names_and_types_by_node(node_name, node_namespace):
+                if current_service_name == service_name:
+                    servers.append(node_name)
+                    break
+        except Exception:
+            pass  # node left the graph between the list call and this query
     return servers
 
 
 def _find_service_clients(node, raw_nodes, service_name):
     clients = []
     for node_name, node_namespace in raw_nodes:
-        for current_service_name, _ in node.get_client_names_and_types_by_node(node_name, node_namespace):
-            if current_service_name == service_name:
-                clients.append(node_name)
-                break
+        try:
+            for current_service_name, _ in node.get_client_names_and_types_by_node(node_name, node_namespace):
+                if current_service_name == service_name:
+                    clients.append(node_name)
+                    break
+        except Exception:
+            pass  # node left the graph between the list call and this query
     return clients
