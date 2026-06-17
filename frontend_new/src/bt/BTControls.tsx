@@ -1,4 +1,4 @@
-import { RotateCcw, MousePointer, Move3D, ZoomIn, Pause, Play, Minimize2, Maximize2 } from 'lucide-react';
+import { RotateCcw, MousePointer, Move3D, ZoomIn, Pause, Play, Minimize2, Maximize2, Layers } from 'lucide-react';
 import { useBtStore } from '../store/btStore';
 import { useTheme } from '../hooks/useTheme';
 
@@ -17,8 +17,10 @@ export function BTControls({ open, onResetView, onZoomExtents, paused, onToggleP
   const blueprint = useBtStore((s) => s.activeTreeId ? s.trees[s.activeTreeId]?.blueprint : undefined);
   const collapsedCount = useBtStore((s) => s.collapsed.size);
   const collapseAll = useBtStore((s) => s.collapseAll);
+  const collapseSubtrees = useBtStore((s) => s.collapseSubtrees);
   const expandAll = useBtStore((s) => s.expandAll);
   const collapsibleCount = (blueprint?.nodes ?? []).filter((n) => n.children.length > 0 && n.id !== blueprint?.root_id).length;
+  const subtreeCount = (blueprint?.nodes ?? []).filter((n) => n.category === 'subtree' || n.type === 'SubTree').length;
   const allCollapsed = collapsibleCount > 0 && collapsedCount >= collapsibleCount;
   const toggleCollapseAll = () => {
     if (allCollapsed) {
@@ -61,6 +63,15 @@ export function BTControls({ open, onResetView, onZoomExtents, paused, onToggleP
           panelBg={theme.panelBg}
           panelBorder={theme.panelBorder}
         />
+        {subtreeCount > 0 && (
+          <Btn
+            onClick={collapseSubtrees}
+            icon={<Layers className="w-3 h-3" />}
+            label={`Sub-trees (${subtreeCount})`}
+            panelBg={theme.panelBg}
+            panelBorder={theme.panelBorder}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler
 from socketserver import ThreadingTCPServer
@@ -77,20 +78,54 @@ def create_ws_handler(runtime, logger):
 
 
 class CORSHTTPRequestHandler(SimpleHTTPRequestHandler):
+    # Injected by run_http_server when a runtime is available.
+    _runtime = None
+
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/api/bt_blackboard' and self._runtime is not None:
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(length)
+                data = json.loads(body)
+                self._runtime.dispatch_event({
+                    'type': 'bt_blackboard',
+                    'timestamp': time.time(),
+                    'data': {'tree_id': data.get('tree_id', ''), 'vars': data.get('vars', {})},
+                    'source': 'http_push',
+                })
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'ok')
+            except Exception as exc:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(str(exc).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def log_message(self, format, *args):
         pass
 
 
-def run_http_server(root_dir, port, logger):
+def run_http_server(root_dir, port, logger, runtime=None):
     os.chdir(root_dir)
+    if runtime is not None:
+        handler_class = type('_Handler', (CORSHTTPRequestHandler,), {'_runtime': runtime})
+    else:
+        handler_class = CORSHTTPRequestHandler
     ThreadingTCPServer.allow_reuse_address = True
-    with ThreadingTCPServer(("", port), CORSHTTPRequestHandler) as httpd:
+    with ThreadingTCPServer(("", port), handler_class) as httpd:
         logger.info(f"Serving frontend static files from: {root_dir}")
         url = f"http://localhost:{port}"
         banner = f"\n\033[1;36m{'━' * 52}\033[0m\n\033[1;36m  ► Open in browser:  {url}\033[0m\n\033[1;36m{'━' * 52}\033[0m"

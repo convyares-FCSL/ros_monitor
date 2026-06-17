@@ -26,6 +26,7 @@ interface BTState {
   select: (id: number | null) => void;
   toggleCollapse: (id: number) => void;
   collapseAll: () => void;
+  collapseSubtrees: () => void;
   expandAll: () => void;
   reset: () => void;
 }
@@ -66,13 +67,19 @@ export const useBtStore = create<BTState>((set) => ({
     if (!tree) return s;
     const now = Date.now();
     const touched = { ...tree.blackboardTouched };
+    const merged = { ...tree.blackboard };
     for (const [k, v] of Object.entries(vars)) {
-      if (tree.blackboard[k] !== v) touched[k] = now;
+      // Don't overwrite a live (non-null) value with a skeleton null — the
+      // skeleton is re-emitted every ~3 s alongside the blueprint and would
+      // otherwise stomp on values pushed via the HTTP side-channel.
+      if (v === null && merged[k] != null) continue;
+      if (merged[k] !== v) touched[k] = now;
+      merged[k] = v;
     }
     return {
       trees: {
         ...s.trees,
-        [treeId]: { ...tree, blackboard: { ...tree.blackboard, ...vars }, blackboardTouched: touched },
+        [treeId]: { ...tree, blackboard: merged, blackboardTouched: touched },
       },
     };
   }),
@@ -91,6 +98,15 @@ export const useBtStore = create<BTState>((set) => ({
     const next = new Set<number>();
     for (const n of tree.blueprint.nodes) {
       if (n.children.length > 0 && n.id !== tree.blueprint.root_id) next.add(n.id);
+    }
+    return { collapsed: next };
+  }),
+  collapseSubtrees: () => set((s) => {
+    const tree = s.activeTreeId ? s.trees[s.activeTreeId] : undefined;
+    if (!tree) return s;
+    const next = new Set(s.collapsed);
+    for (const n of tree.blueprint.nodes) {
+      if (n.category === 'subtree' || n.type === 'SubTree') next.add(n.id);
     }
     return { collapsed: next };
   }),

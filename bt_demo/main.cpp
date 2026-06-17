@@ -5,15 +5,69 @@
 // Also writes a timestamped .btlog.db3 SQLite log via SqliteLogger so the
 // VCR replay pipeline can be tested against a locally generated file.
 //
+// Blackboard values are pushed to the bridge HTTP server after each tick so the
+// frontend blackboard panel shows live data (the Groot2 ZMQ protocol has no
+// blackboard retrieval; this side-channel fills the gap).
+//
 // Build + run: see bt_demo/README.md (source ROS, cmake, ./bt_demo).
+#include <arpa/inet.h>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <ctime>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <thread>
 #include <iostream>
+#include <unistd.h>
 
 #include "behaviortree_cpp/bt_factory.h"
 #include "behaviortree_cpp/loggers/groot2_publisher.h"
 #include "behaviortree_cpp/loggers/bt_sqlite_logger.h"
+
+// Bridge HTTP port (matches DEFAULT_HTTP_PORT in config.py).
+static constexpr int kBridgeHttpPort = 7260;
+static constexpr const char* kTreeId = "ChargeManager";
+
+// Fire-and-forget HTTP POST of a JSON blackboard snapshot to the bridge.
+// Silently does nothing if the bridge is not listening.
+static void push_blackboard(double state_of_charge) {
+  char body[256];
+  std::snprintf(body, sizeof(body),
+    R"({"tree_id":"%s","vars":{"state_of_charge":%.2f,"charge_current":32.0,"charger_port":"DC-FAST-1"}})",
+    kTreeId, state_of_charge);
+  int body_len = static_cast<int>(std::strlen(body));
+
+  char req[512];
+  std::snprintf(req, sizeof(req),
+    "POST /api/bt_blackboard HTTP/1.1\r\n"
+    "Host: localhost:%d\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: %d\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "%s",
+    kBridgeHttpPort, body_len, body);
+
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) return;
+
+  struct timeval tv{};
+  tv.tv_sec = 0;
+  tv.tv_usec = 200000;  // 200 ms — don't block the tick loop
+  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  struct sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(kBridgeHttpPort);
+  inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+    send(sock, req, std::strlen(req), MSG_NOSIGNAL);
+  }
+  close(sock);
+}
 
 using namespace BT;
 
@@ -94,9 +148,18 @@ int main() {
 
   std::cout << "bt_demo: ChargeManager publishing on Groot2 port 1667 (Ctrl-C to stop)\n";
   std::cout << "bt_demo: writing log to " << log_path << "\n";
+  std::cout << "bt_demo: pushing blackboard to bridge HTTP port " << kBridgeHttpPort << "\n";
 
   while (true) {
     tree.tickOnce();
+
+    // Read the live blackboard value and push it to the bridge HTTP endpoint.
+    // The Groot2 ZMQ protocol has no blackboard retrieval, so we side-channel
+    // the data via a simple HTTP POST so the dashboard panel shows live values.
+    double soc = 0.0;
+    try { soc = tree.rootBlackboard()->get<double>("state_of_charge"); } catch (...) {}
+    push_blackboard(soc);
+
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
   }
 

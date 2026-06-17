@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import traceback
@@ -343,9 +344,36 @@ if ROS_AVAILABLE:
             return callback
 
         def make_subscription_callback(self, topic_name, topic_type):
+            # Topics matching this pattern publish JSON-encoded blackboard snapshots:
+            # {"tree_id": "MyTree", "vars": {"key": value, ...}}
+            # Published by a BT executor (or a thin ROS node wrapping one) so the
+            # dashboard blackboard panel shows live values without changing the
+            # Groot2 ZMQ protocol (which has no blackboard retrieval).
+            is_bb_topic = (
+                topic_type == 'std_msgs/msg/String'
+                and (topic_name.endswith('/bt_blackboard') or topic_name == '/bt_monitor/blackboard')
+            )
+
             def callback(msg):
                 # Always record arrival for Hz tracking
                 self.hz_tracker.record(topic_name)
+
+                # BT blackboard JSON topic → emit bt_blackboard event directly.
+                if is_bb_topic:
+                    try:
+                        data = json.loads(msg.data)
+                        if isinstance(data.get('vars'), dict):
+                            self.runtime.dispatch_event({
+                                'type': 'bt_blackboard',
+                                'timestamp': time.time(),
+                                'data': {
+                                    'tree_id': data.get('tree_id', ''),
+                                    'vars': data['vars'],
+                                },
+                            })
+                    except Exception:
+                        pass
+                    return  # don't double-emit as message_event
 
                 # Lifecycle TransitionEvent → emit dedicated lifecycle_event
                 if topic_type == _LIFECYCLE_TRANSITION_EVENT_TYPE:

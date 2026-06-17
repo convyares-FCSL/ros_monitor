@@ -22,6 +22,7 @@ live ZMQ path + little-endian assumption need confirmation against a running
 executor — point `--btros HOST:PORT` at one and watch the bridge logs.
 """
 
+import re
 import struct
 import threading
 import time
@@ -212,6 +213,28 @@ def parse_tree_xml(xml_str):
     return {'tree_id': main_id, 'version': 1, 'root_id': root_id, 'nodes': nodes}
 
 
+_BB_KEY_RE = re.compile(r'^\{(.+)\}$')
+
+
+def skeleton_blackboard(blueprint: dict) -> dict:
+    """Scan all port values in a blueprint for {key} remappings.
+
+    Returns a dict of {key: None} for every discovered blackboard key.  The
+    real values are not available from the Groot2 ZMQ protocol; this skeleton
+    at least populates the inspector panel so the user can see which keys the
+    tree uses.
+    """
+    keys: dict = {}
+    for node in blueprint.get('nodes', []):
+        ports = node.get('ports', {})
+        for direction in ('input', 'output'):
+            for val in (ports.get(direction) or {}).values():
+                m = _BB_KEY_RE.match(str(val).strip())
+                if m:
+                    keys[m.group(1)] = None
+    return keys
+
+
 # --- Bridge thread ----------------------------------------------------------
 class BTRosBridge:
     """Polls a Groot2 v4 executor and forwards bt_blueprint / bt_delta events."""
@@ -283,6 +306,20 @@ class BTRosBridge:
             if self._running:
                 time.sleep(2.0)
 
+    def _emit_blueprint_and_skeleton(self, blueprint, now):
+        """Emit blueprint + a skeleton blackboard populated from port remappings."""
+        self.runtime.dispatch_event({
+            "type": "bt_blueprint", "timestamp": now, "data": blueprint,
+            "source": self.label,
+        })
+        skeleton = skeleton_blackboard(blueprint)
+        if skeleton:
+            self.runtime.dispatch_event({
+                "type": "bt_blackboard", "timestamp": now,
+                "data": {"tree_id": blueprint['tree_id'], "vars": skeleton},
+                "source": self.label,
+            })
+
     def _session(self, sock, zmq):
         # 1) Fetch + publish the tree structure.
         xml_payload = self._request(sock, REQ_FULLTREE)
@@ -291,10 +328,7 @@ class BTRosBridge:
         blueprint = parse_tree_xml(xml_payload.decode('utf-8'))
         tree_id = blueprint['tree_id']
         known_ids = {n['id'] for n in blueprint['nodes']}
-        self.runtime.dispatch_event({
-            "type": "bt_blueprint", "timestamp": time.time(), "data": blueprint,
-            "source": self.label,
-        })
+        self._emit_blueprint_and_skeleton(blueprint, time.time())
         prefix = f"[{self.label}] " if self.label else ""
         self.logger.info(f"BTRos: {prefix}tree '{blueprint['tree_id']}' with {len(known_ids)} nodes")
 
@@ -305,10 +339,7 @@ class BTRosBridge:
         while self._running:
             now = time.time()
             if now - last_blueprint >= self.blueprint_reemit_s:
-                self.runtime.dispatch_event({
-                    "type": "bt_blueprint", "timestamp": now, "data": blueprint,
-                    "source": self.label,
-                })
+                self._emit_blueprint_and_skeleton(blueprint, now)
                 last_blueprint = now
 
             payload = self._request(sock, REQ_STATUS)

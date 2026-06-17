@@ -154,7 +154,7 @@ function BtHeaderContent() {
       <TreeSelector />
       <div className="hidden md:flex items-center gap-6">
         <Stat icon={<GitBranch className="w-3.5 h-3.5" />} label="Trees" value={treeIds.length} colorHex="#a855f7" />
-        <Stat icon={<Boxes className="w-3.5 h-3.5" />} label="Nodes" value={blueprint?.nodes.length ?? 0} colorHex="#38bdf8" />
+        <Stat icon={<Boxes className="w-3.5 h-3.5" />} label="Nodes" value={blueprint?.nodes.filter((n) => n.category !== 'decorator').length ?? 0} colorHex="#38bdf8" />
         <Stat icon={<CircleDot className="w-3.5 h-3.5" />} label="Running" value={counts.running} colorHex="#06b6d4" />
         <Stat icon={<CheckCircle2 className="w-3.5 h-3.5" />} label="Success" value={counts.success} colorHex="#10b981" />
         <Stat icon={<XCircle className="w-3.5 h-3.5" />} label="Failure" value={counts.failure} colorHex="#ef4444" />

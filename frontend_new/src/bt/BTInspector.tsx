@@ -196,6 +196,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 function formatVal(v: unknown): string {
+  if (v === null || v === undefined) return '—';
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   return String(v);

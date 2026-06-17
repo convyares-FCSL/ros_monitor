@@ -245,7 +245,7 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
 
         http_thread = threading.Thread(
             target=run_http_server,
-            args=(config.frontend_dir, config.http_port, logger),
+            args=(config.frontend_dir, config.http_port, logger, runtime),
             daemon=True,
         )
         http_thread.start()

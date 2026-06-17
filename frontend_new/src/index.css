@@ -61,11 +61,28 @@ details summary::-webkit-details-marker { display: none; }
   background: var(--menu-bg-solid, rgba(15, 23, 42, 0.95));
   transition: border-color 0.15s, background-color 0.15s;
 }
+/* SubTree nodes: violet dashed border to signal "portal to another tree". */
 .bt-core-subtree { border-style: dashed; }
+.bt-core-subtree.bt-core-idle {
+  border-color: rgba(139, 92, 246, 0.6);
+  background-color: rgba(109, 40, 217, 0.1);
+}
+.bt-core-subtree.bt-core-running { background-color: rgba(109, 40, 217, 0.08); }
+.bt-core-subtree.bt-core-success { background-color: rgba(16, 185, 129, 0.16); }
+.bt-core-subtree.bt-core-failure { background-color: rgba(239, 68, 68, 0.16); }
 .bt-core-idle { border-color: #475569; }
 .bt-core-running { border-color: #06b6d4; animation: bt-pulse 1.1s ease-in-out infinite; }
 .bt-core-success { border-color: #10b981; background-color: rgba(16, 185, 129, 0.16); }
 .bt-core-failure { border-color: #ef4444; background-color: rgba(239, 68, 68, 0.16); }
+/* Condition nodes get a subtle indigo tint at idle so they're visually distinct
+   from action nodes. The tint is overridden when status changes to success/failure. */
+.bt-core-cond { background-color: rgba(99, 102, 241, 0.09); border-color: rgba(99, 102, 241, 0.35); }
+.bt-core-cond.bt-core-running { border-color: #06b6d4; }
+.bt-core-cond.bt-core-success { background-color: rgba(16, 185, 129, 0.16); border-color: #10b981; }
+.bt-core-cond.bt-core-failure { background-color: rgba(239, 68, 68, 0.16); border-color: #ef4444; }
+/* AlwaysSuccess / ForceSuccess: green border at idle; AlwaysFailure / ForceFailure: red. */
+.bt-core-stamp-ok.bt-core-idle { border-color: rgba(16, 185, 129, 0.5); background-color: rgba(16, 185, 129, 0.06); }
+.bt-core-stamp-fail.bt-core-idle { border-color: rgba(239, 68, 68, 0.5); background-color: rgba(239, 68, 68, 0.06); }
 @keyframes bt-pulse {
   0%, 100% { box-shadow: 0 0 2px rgba(6, 182, 212, 0.5); }
   50% { box-shadow: 0 0 12px rgba(6, 182, 212, 0.65); }

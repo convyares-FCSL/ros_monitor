@@ -267,12 +267,13 @@ export function Telemetry() {
         .map(([treeId, blackboard]) => ({
           treeId,
           blackboard,
-          numericKeys: Object.entries(blackboard)
-            .filter(([, v]) => typeof v === 'number')
-            .map(([k]) => k)
-            .sort(),
+          // All known keys — numeric ones have live values, null ones are skeleton
+          // (Groot2 protocol gives us key names from port mappings but not values).
+          // We still show null keys so the user can pre-add them to the chart;
+          // samples will start accumulating once real values arrive via HTTP push.
+          allKeys: Object.keys(blackboard).sort(),
         }))
-        .filter((t) => t.numericKeys.length > 0),
+        .filter((t) => t.allKeys.length > 0),
     [rawTreeBlackboards],
   );
 
@@ -572,31 +573,33 @@ export function Telemetry() {
                 <Divider />
                 <div className="flex flex-col gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>Blackboard</p>
-                  {allTreeBlackboards.map(({ treeId, blackboard, numericKeys }) => (
+                  {allTreeBlackboards.map(({ treeId, blackboard, allKeys }) => (
                     <div key={treeId} className="flex flex-col gap-1">
                       {allTreeBlackboards.length > 1 && (
                         <p className="text-[9px] font-mono px-0.5 truncate" style={{ color: 'var(--menu-text-dim)' }} title={treeId}>{treeId}</p>
                       )}
-                      {numericKeys.map((key) => {
-                        const added = isbbActive(key);
-                        const val   = blackboard[key] as number;
+                      {allKeys.map((key) => {
+                        const added    = isbbActive(key);
+                        const raw      = blackboard[key];
+                        const hasValue = typeof raw === 'number';
+                        const valStr   = hasValue ? (raw as number).toPrecision(4) : '—';
                         return (
                           <button
                             key={key}
-                            disabled={atLimit || added}
-                            onClick={() => addBlackboardSeries(key, draftAxis)}
+                            disabled={atLimit && !added}
+                            onClick={() => !added && addBlackboardSeries(key, draftAxis)}
                             className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
                             style={{
                               opacity: atLimit && !added ? 0.4 : 1,
                               cursor: added ? 'default' : atLimit ? 'not-allowed' : 'pointer',
                               background: added ? 'rgba(6,182,212,0.1)' : 'rgb(var(--fg-rgb) / 0.04)',
                               border: `1px solid ${added ? 'rgba(6,182,212,0.25)' : 'rgb(var(--fg-rgb) / 0.07)'}`,
-                              color: added ? '#06b6d4' : 'var(--menu-text-muted)',
+                              color: added ? '#06b6d4' : hasValue ? 'var(--menu-text-muted)' : 'rgb(var(--fg-rgb) / 0.35)',
                             }}
-                            title={added ? 'Already charted' : `Add "${key}"`}
+                            title={added ? 'Already charted' : hasValue ? `Add "${key}"` : `Add "${key}" — no live value yet`}
                           >
                             <span>{key}</span>
-                            <span className="tabular-nums" style={{ color: 'var(--menu-text-dim)' }}>{val.toPrecision(4)}</span>
+                            <span className="tabular-nums" style={{ color: hasValue ? 'var(--menu-text-dim)' : 'rgb(var(--fg-rgb) / 0.2)' }}>{valStr}</span>
                           </button>
                         );
                       })}
