@@ -201,6 +201,12 @@ source ~/ros_monitor/scripts/detect_ros.sh 2>/dev/null || true
 `detect_ros.sh` also sources any colcon overlay workspaces it finds under `$HOME`
 (up to 5 directories deep), so custom interface packages are available automatically.
 
+To limit that search on a larger dev machine:
+
+```bash
+export ROS_MONITOR_OVERLAY_ROOTS="$HOME/ros2_ws:$HOME/sim_ws"
+```
+
 ---
 
 ## 11. Auto-restart on new workspace (watched launch)
@@ -224,6 +230,16 @@ Restart flow when a new workspace is detected:
 
 Requires `inotify-tools` (installed in step 1). Falls back to a single run with
 a warning if `inotify-tools` is not present.
+
+To limit the watch scope:
+
+```bash
+export ROS_MONITOR_WATCH_ROOTS="$HOME/ros2_ws:$HOME/sim_ws"
+./scripts/run_with_watch.sh --mode full --skip-build
+```
+
+For unattended restarts on boot/crash, a `systemd` user-service template lives at
+`deploy/systemd/ros-monitor-dev.service`.
 
 ---
 

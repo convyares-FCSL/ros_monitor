@@ -1,0 +1,21 @@
+[Unit]
+Description=ROS Monitor dev bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Applications/ROS Monitor/ros_monitor
+Environment=HOME=%h
+# Optional: narrow these to the actual workspaces on the Thor box.
+# Environment=ROS_MONITOR_OVERLAY_ROOTS=%h/ros2_ws:%h/sim_ws
+# Environment=ROS_MONITOR_WATCH_ROOTS=%h/ros2_ws:%h/sim_ws
+Environment=ROS_MONITOR_EVENT_QUEUE_MAX=4096
+ExecStart=/bin/bash -lc './scripts/run_with_watch.sh --mode full --skip-build'
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

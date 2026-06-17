@@ -36,6 +36,15 @@ restarts the bridge automatically whenever a new workspace is built:
 Requires `inotify-tools` (`sudo apt install inotify-tools`). Falls back to a plain
 single run without it.
 
+To avoid scanning all of `$HOME` on larger dev machines, you can narrow the
+workspace search/watch scope:
+
+```bash
+export ROS_MONITOR_OVERLAY_ROOTS="$HOME/ros2_ws:$HOME/sim_ws"
+export ROS_MONITOR_WATCH_ROOTS="$HOME/ros2_ws:$HOME/sim_ws"
+./scripts/run_with_watch.sh --mode full --skip-build
+```
+
 ### Standard launch
 
 ```bash
@@ -78,6 +87,13 @@ Useful variants:
 # Faster restart — reuse existing frontend build
 ./scripts/run_with_watch.sh --skip-build
 ```
+
+### Unattended dev on Thor
+
+A `systemd` user-service template is included at
+[`deploy/systemd/ros-monitor-dev.service`](deploy/systemd/ros-monitor-dev.service).
+It restarts the launcher on crash/boot, while `run_with_watch.sh` still handles
+workspace-driven restarts.
 
 ---
 

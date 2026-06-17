@@ -7,6 +7,9 @@
 
 _ros_pref=(jazzy iron humble rolling)
 
+_overlay_roots=()
+IFS=':' read -r -a _overlay_roots <<< "${ROS_MONITOR_OVERLAY_ROOTS:-$HOME}"
+
 _detect_distro() {
   if [[ -n "${ROS_DISTRO:-}" && -f "/opt/ros/$ROS_DISTRO/setup.bash" ]]; then
     echo "$ROS_DISTRO"; return
@@ -18,13 +21,17 @@ _detect_distro() {
 }
 
 _source_overlays() {
-  while IFS= read -r _s; do
-    [[ "$_s" == *"/.venv/"* ]] && continue
-    set +u
-    # shellcheck disable=SC1090
-    source "$_s" 2>/dev/null || true
-    set -u
-  done < <(find "$HOME" -maxdepth 5 -name setup.bash -path "*/install/setup.bash" 2>/dev/null | sort)
+  local _root
+  for _root in "${_overlay_roots[@]}"; do
+    [[ -n "$_root" && -d "$_root" ]] || continue
+    while IFS= read -r _s; do
+      [[ "$_s" == *"/.venv/"* ]] && continue
+      set +u
+      # shellcheck disable=SC1090
+      source "$_s" 2>/dev/null || true
+      set -u
+    done < <(find "$_root" -maxdepth 5 -name setup.bash -path "*/install/setup.bash" 2>/dev/null | sort)
+  done
 }
 
 _ROS=$(_detect_distro)
@@ -40,4 +47,5 @@ else
 fi
 
 unset _ros_pref _ROS
+unset _overlay_roots
 unset -f _detect_distro _source_overlays

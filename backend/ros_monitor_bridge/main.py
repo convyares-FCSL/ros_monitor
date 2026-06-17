@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 
 from ros_monitor_bridge.config import (
@@ -83,13 +84,17 @@ def main():
         logger.warning(warning)
     _log_run_mode(logger, run_mode)
 
-    runtime = BridgeRuntime()
+    event_queue_max = max(1, int(os.environ.get("ROS_MONITOR_EVENT_QUEUE_MAX", "4096")))
+    runtime = BridgeRuntime(event_queue_maxsize=event_queue_max)
     rate_limiter = RateLimiter(config.rate_limit_hz)
 
     try:
         asyncio.run(async_main(config, runtime, rate_limiter, run_mode.event_payload(), logger))
     except KeyboardInterrupt:
         logger.info("Shutting down bridge...")
+    except Exception:
+        logger.exception("Bridge terminated due to a fatal runtime error.")
+        raise
     finally:
         logger.info("Bridge closed.")
 
@@ -188,6 +193,34 @@ async def mode_broadcaster(runtime, mode):
         await asyncio.sleep(3.0)
 
 
+def _worker_failure_reasons(http_thread=None, ros_thread=None, tasks=()):
+    issues = []
+    if http_thread is not None and not http_thread.is_alive():
+        issues.append("HTTP server thread stopped")
+    if ros_thread is not None and not ros_thread.is_alive():
+        issues.append("ROS executor thread stopped")
+    for label, task in tasks:
+        if task is None or not task.done():
+            continue
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            continue
+        if exc is None:
+            issues.append(f"{label} task stopped unexpectedly")
+        else:
+            issues.append(f"{label} task failed: {exc}")
+    return issues
+
+
+async def worker_watchdog(http_thread=None, ros_thread=None, tasks=(), poll_s: float = 1.0):
+    while True:
+        issues = _worker_failure_reasons(http_thread=http_thread, ros_thread=ros_thread, tasks=tasks)
+        if issues:
+            raise RuntimeError("; ".join(issues))
+        await asyncio.sleep(poll_s)
+
+
 async def async_main(config, runtime, rate_limiter, mode, logger):
     import websockets
     from ros_monitor_bridge.server import (
@@ -197,7 +230,7 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
         websocket_broadcaster,
     )
 
-    runtime.attach_loop(asyncio.get_running_loop())
+    runtime.attach_loop(asyncio.get_running_loop(), logger)
     stop_event = threading.Event()
     ros_thread = None
     ws_handler = create_ws_handler(runtime, logger)
@@ -258,8 +291,19 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
                 b.start()
                 bt_bridges.append(b)
 
+        watchdog_task = None
         try:
-            await asyncio.Future()
+            watchdog_task = asyncio.create_task(
+                worker_watchdog(
+                    http_thread=http_thread,
+                    ros_thread=ros_thread,
+                    tasks=(
+                        ("websocket broadcaster", broadcaster_task),
+                        ("mode broadcaster", mode_task),
+                    ),
+                )
+            )
+            await asyncio.gather(broadcaster_task, mode_task, watchdog_task)
         except asyncio.CancelledError:
             pass
         finally:
@@ -275,8 +319,14 @@ async def async_main(config, runtime, rate_limiter, mode, logger):
                 b.stop()
             if config.replay_file and runtime.replay_controller:
                 runtime.replay_controller.stop()
-            mode_task.cancel()
-            broadcaster_task.cancel()
+            for task in (watchdog_task, mode_task, broadcaster_task):
+                if task is not None:
+                    task.cancel()
+            for task in (watchdog_task, mode_task, broadcaster_task):
+                if task is None:
+                    continue
+                with suppress(asyncio.CancelledError):
+                    await task
 
 
 def parse_args(argv=None):

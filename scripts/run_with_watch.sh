@@ -10,6 +10,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DETECT_ROS="$ROOT_DIR/scripts/detect_ros.sh"
 VIZ="$ROOT_DIR/scripts/run_visualizer_new.sh"
+WATCH_ROOTS=()
+IFS=':' read -r -a WATCH_ROOTS <<< "${ROS_MONITOR_WATCH_ROOTS:-${ROS_MONITOR_OVERLAY_ROOTS:-$HOME}}"
 
 if ! command -v inotifywait >/dev/null 2>&1; then
   echo "[watch] inotify-tools not installed — running without workspace watching."
@@ -56,7 +58,7 @@ while [[ "$RESTART" == true ]]; do
   (
     inotifywait -q -r -m -e create -e moved_to \
       --format '%w%f' \
-      "$HOME" 2>/dev/null \
+      "${WATCH_ROOTS[@]}" 2>/dev/null \
     | while IFS= read -r _path; do
         [[ "$_path" == */install/setup.bash ]] || continue
         [[ "$_path" == *"/.venv/"* ]] && continue
