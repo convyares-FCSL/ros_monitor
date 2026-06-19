@@ -9,7 +9,7 @@ browser.
 | **ROS Introspection** | Real-time 3D graph of nodes, topics, services, and actions with live telemetry particles and Hz tracking |
 | **Behavior Tree** | Unreal-style BT.CPP v4 visualizer — live node states, blackboard, port remappings, multi-tree explorer |
 | **BT Replay** | Scrub, seek, and play back recorded `.btlog` files with a density histogram and variable speed |
-| **Telemetry** | uPlot canvas chart — record any ROS topic field or blackboard variable, pan/zoom, CSV export |
+| **Telemetry** | react-chartjs-2 live chart — record any ROS topic field or BT blackboard variable, zoom/pan, dual Y axes, CSV export; data persists across tab switches |
 | **Logging** | Live `/rosout` console with level filter, search, and payload capture |
 | **Settings** | WS endpoint, theme, telemetry rate limits, per-view defaults — persisted to `localStorage` |
 
@@ -138,14 +138,17 @@ See **[bt_demo/README.md](bt_demo/README.md)** for the full standalone C++ demo.
 
 1. Navigate to the **Telemetry** tab.
 2. Add a series — type a topic name (e.g. `/diagnostics`) and an optional field
-   dot-path (e.g. `status.0.level`), or pick a blackboard variable from the
+   dot-path (e.g. `status.0.level`), or pick a numeric blackboard key from the
    **Blackboard** panel (appears automatically when a BT tree is running).
-3. Press **Start**. The chart fills left-to-right for the first 10 minutes, then
-   rolls as a live 10-minute window.
-4. Scroll to zoom, drag to pan, click **↺ Live** or double-click the chart to snap
+3. Press **Start**. The chart builds left-to-right from the moment recording
+   begins, then scrolls as a live 10-minute rolling window.
+4. Navigate to other tabs freely — the chart keeps recording. Data is controlled
+   by **Start / Stop**, not which tab is visible.
+5. Scroll to zoom, drag to pan, click **↺ Live** or double-click the chart to snap
    back to live view.
-5. Use the **Y Axes** section in the sidebar to pin left/right axis ranges.
-6. Click the download icon to export all recorded series as a CSV.
+6. Switch a series between the left and right Y axes using the axis button next to
+   each series name. Use **Y Axes** in the sidebar to pin fixed ranges.
+7. Click the download icon to export all visible series as a CSV.
 
 ---
 
@@ -178,7 +181,7 @@ These are the natural extension points if the platform grows:
 
 - **Topic autocomplete in Telemetry** — feed the live `graph_update` topic list into the series-add input so the user doesn't have to type topic names manually.
 - **BT Replay keyboard shortcuts** — space bar for play/pause, left/right arrow for frame-step.
-- **Persistent Telemetry layout** — save the current series list and axis config to `localStorage` so the chart survives a page refresh.
+- **Persistent Telemetry layout** — save the current series list and axis config to `localStorage` so the chart survives a full page refresh (data already persists across tab switches).
 - **Multi-executor BT** — the bridge already auto-discovers multiple Groot2 ports; the frontend tree-explorer panel supports switching trees, but there is no UI to add/remove executor endpoints at runtime without restarting the bridge.
 - **Alert rules** — threshold triggers on Telemetry series (e.g. topic Hz drops below 5 Hz, or a blackboard variable exceeds a value) that surface in the Logging console.
 - **Recording to file** — a bridge-side option to write all streamed events to a `.jsonl` file for post-session replay (similar to the existing BT replay but for the full dashboard).

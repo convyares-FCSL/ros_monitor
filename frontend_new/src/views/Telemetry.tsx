@@ -1,22 +1,30 @@
 /**
- * Telemetry.tsx — uPlot canvas time-series chart.
+ * Telemetry.tsx — react-chartjs-2 live time-series chart.
  *
- * Sources:
- *  - ROS topics     → message_event frames, value by dot-path from payload
- *  - BT blackboard  → bt_blackboard frames, numeric keys grouped by tree
+ * Chart.js owns the data. Series config (label/colour/axis) lives in
+ * telemetryStore. Data is pushed imperatively from bridge events directly
+ * into Chart.js datasets — no ring-buffer, no polling interval for alignment.
  *
- * Axes: Left (y1) / Right (y2) — independent scaling.
- *   • Auto-scale by default; override with per-axis min/max in the sidebar.
- *
- * Default view: last 10 minutes (live-scroll). Scroll/drag to zoom/pan.
- * Double-click snaps back to live 10-minute window.
- *
- * Grid colours are resolved from the active theme (not CSS var strings,
- * which don't work inside canvas context).
+ * Zoom:  scroll-wheel changes span, live-follow continues at new span.
+ * Pan:   mouse-drag freezes x-axis. "Live" button or double-click resumes.
  */
 
-import uPlot from 'uplot';
-import 'uplot/dist/uPlot.min.css';
+import {
+  Chart as ChartJS,
+  TimeScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  type ChartData,
+  type ChartOptions,
+  type TooltipItem,
+} from 'chart.js';
+import 'chartjs-adapter-date-fns';
+import zoomPlugin from 'chartjs-plugin-zoom';
+import { Line } from 'react-chartjs-2';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart, Play, Square, RotateCcw, Plus, X, Download, ChevronLeft, ChevronRight,
@@ -27,18 +35,22 @@ import { useTheme } from '../hooks/useTheme';
 import { useBtStore } from '../store/btStore';
 import {
   useTelemetryStore,
-  pushSample,
-  getSeriesData,
   bbSeriesId,
   MAX_SERIES,
   type AxisSide,
-  type AxisRange,
   type SeriesConfig,
 } from '../store/telemetryStore';
 import { subscribeToBridgeFrames, startBridgeConnection } from '../bridge/connection';
 import type { MessageEvent } from '../types';
 
-const LIVE_WINDOW_S = 600;   // default 10-minute x-axis
+// Register Chart.js components and zoom plugin (module-level, once).
+ChartJS.register(TimeScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend, zoomPlugin);
+
+const LIVE_WINDOW_MS = 600_000; // 10 minutes
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type DataPoint = { x: number; y: number };
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -52,174 +64,33 @@ function resolvePath(obj: unknown, path: string): number | null {
   return typeof cur === 'number' ? cur : null;
 }
 
-/** Convert "R G B" theme string to rgba(r,g,b,a) for canvas rendering. */
 function fgRgba(fgRgb: string, alpha: number) {
   return `rgba(${fgRgb.replace(/ /g, ',')},${alpha})`;
 }
 
-function downloadCSV(series: SeriesConfig[]): void {
-  if (series.length === 0) return;
-  const datasets = series.map((s) => {
-    const [ts, vs] = getSeriesData(s.id);
-    return { label: s.label, ts, vs };
+function downloadCSV(chart: ChartJS<'line'>, series: SeriesConfig[]): void {
+  if (!series.length) return;
+  const rowMap = new Map<number, (number | null)[]>();
+  chart.data.datasets.forEach((ds, si) => {
+    (ds.data as DataPoint[]).forEach(({ x, y }) => {
+      if (!rowMap.has(x)) rowMap.set(x, new Array(series.length).fill(null));
+      rowMap.get(x)![si] = y;
+    });
   });
-  const rowMap = new Map<number, (number | undefined)[]>();
-  datasets.forEach((d, si) => {
-    for (let i = 0; i < d.ts.length; i++) {
-      const t = d.ts[i];
-      if (!rowMap.has(t)) rowMap.set(t, new Array(datasets.length).fill(undefined));
-      rowMap.get(t)![si] = d.vs[i];
-    }
-  });
-  const sortedTs = Array.from(rowMap.keys()).sort((a, b) => a - b);
-  const header = `timestamp_unix_s,${datasets.map((d) => `"${d.label}"`).join(',')}`;
-  const lines = sortedTs.map((t) =>
-    `${t.toFixed(3)},${rowMap.get(t)!.map((v) => (v === undefined ? '' : v)).join(',')}`);
-  const csv = [header, ...lines].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const sorted = Array.from(rowMap.keys()).sort((a, b) => a - b);
+  const header = `timestamp_unix_s,${series.map((s) => `"${s.label}"`).join(',')}`;
+  const lines  = sorted.map((t) =>
+    `${(t / 1000).toFixed(3)},${rowMap.get(t)!.map((v) => (v == null ? '' : v)).join(',')}`);
+  const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
   a.href = url;
   a.download = `telemetry_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-// ── uPlot builder (canvas colours from resolved theme, not CSS vars) ──────────
-
-function buildOpts(
-  series: SeriesConfig[],
-  width: number,
-  height: number,
-  fgRgb: string,
-  axisRanges: { y1: AxisRange; y2: AxisRange },
-  onSetCursor: (u: uPlot) => void,
-): uPlot.Options {
-  const gridC  = fgRgba(fgRgb, 0.07);
-  const tickC  = fgRgba(fgRgb, 0.15);
-  const axisC  = fgRgba(fgRgb, 0.45);
-
-  const makeScale = (r: AxisRange): uPlot.Scale => {
-    if (r.min != null || r.max != null) {
-      return {
-        auto: false,
-        range: (_u, dmin, dmax) => [r.min ?? dmin, r.max ?? dmax],
-      };
-    }
-    return { auto: true };
-  };
-
-  return {
-    width,
-    height,
-    series: [
-      {},
-      ...series.map((s) => ({ label: s.label, stroke: s.color, width: 1.5, scale: s.axis })),
-    ],
-    scales: { x: { time: true }, y1: makeScale(axisRanges.y1), y2: makeScale(axisRanges.y2) },
-    axes: [
-      { scale: 'x', stroke: axisC, ticks: { stroke: tickC }, grid: { stroke: gridC } },
-      { scale: 'y1', side: 3, label: 'Left',  stroke: axisC, grid: { show: true, stroke: gridC }, ticks: { stroke: tickC } },
-      { scale: 'y2', side: 1, label: 'Right', stroke: axisC, grid: { show: false }, ticks: { stroke: tickC } },
-    ],
-    select: { show: false, left: 0, top: 0, width: 0, height: 0 },
-    cursor: { drag: { x: false, y: false }, sync: { key: 'telem' } },
-    hooks: { setCursor: [onSetCursor] },
-  };
-}
-
-// ── Cursor tooltip (direct DOM, no re-renders) ────────────────────────────────
-
-function updateTooltip(
-  u: uPlot,
-  tip: HTMLDivElement | null,
-  container: HTMLDivElement | null,
-  series: SeriesConfig[],
-) {
-  if (!tip || !container) return;
-  const idx  = u.cursor.idx;
-  const left = u.cursor.left ?? -1;
-  if (idx == null || left < 0) { tip.style.display = 'none'; return; }
-  const t = (u.data[0] as number[])?.[idx];
-  if (t == null) { tip.style.display = 'none'; return; }
-
-  const d = new Date(t * 1000);
-  const timeStr = d.toISOString().slice(11, 23);
-  let html = `<div style="font-size:9px;color:var(--menu-text-muted);margin-bottom:4px;font-family:monospace">${timeStr}</div>`;
-  for (let i = 0; i < series.length; i++) {
-    const v = (u.data[i + 1] as number[])?.[idx];
-    const s = series[i];
-    const vStr = v == null || isNaN(v) ? '—'
-      : Math.abs(v) >= 1000 || (Math.abs(v) < 0.001 && v !== 0) ? v.toExponential(3)
-      : v.toPrecision(5);
-    html += `<div style="display:flex;align-items:center;gap:5px;margin-top:2px">
-      <span style="width:7px;height:7px;border-radius:50%;background:${s.color};flex-shrink:0"></span>
-      <span style="font-size:9px;color:var(--menu-text-muted);font-family:monospace;white-space:nowrap">${s.label}</span>
-      <span style="font-size:10px;font-family:monospace;font-weight:700;color:${s.color};margin-left:auto;padding-left:8px">${vStr}</span>
-    </div>`;
-  }
-  tip.innerHTML = html;
-
-  const plotLeft = u.bbox.left / window.devicePixelRatio;
-  const tipW    = tip.offsetWidth;
-  const gap     = 14;
-  const absLeft = plotLeft + left;
-  tip.style.left    = (absLeft + gap + tipW > container.clientWidth)
-    ? `${absLeft - gap - tipW}px` : `${absLeft + gap}px`;
-  tip.style.display = 'block';
-}
-
-// ── Merge all series onto a common time axis for uPlot ───────────────────────
-// Ring buffers from getSeriesData() are already sorted, so we k-way merge them
-// in O(N·K) — no sort step needed. Each series' values are scattered into the
-// merged timeline; timestamps where a series has no sample become NaN (gap).
-// This is correct regardless of differing sample rates or start times.
-
-function buildAlignedData(snap: SeriesConfig[]): uPlot.AlignedData {
-  const empty = () => new Float64Array(0);
-  if (snap.length === 0) return [empty()];
-
-  const datasets = snap.map((s) => getSeriesData(s.id));
-  const lens      = datasets.map(([ts]) => ts.length);
-  const totalValid = lens.reduce((a, b) => a + b, 0);
-  if (totalValid === 0) return [empty(), ...snap.map(empty)] as uPlot.AlignedData;
-
-  // K-way merge into a deduplicated, sorted timestamp array.
-  const ptrs    = new Int32Array(snap.length);
-  const tsBuf   = new Float64Array(totalValid); // over-allocated; trimmed below
-  let out = 0;
-  while (true) {
-    let minT = Infinity;
-    for (let i = 0; i < snap.length; i++) {
-      if (ptrs[i] < lens[i] && datasets[i][0][ptrs[i]] < minT)
-        minT = datasets[i][0][ptrs[i]];
-    }
-    if (minT === Infinity) break;
-    tsBuf[out++] = minT;
-    for (let i = 0; i < snap.length; i++) {
-      if (ptrs[i] < lens[i] && datasets[i][0][ptrs[i]] === minT) ptrs[i]++;
-    }
-  }
-  const allTs = tsBuf.subarray(0, out);
-
-  // Build timestamp → merged-index lookup for O(1) scatter.
-  const tsIndex = new Map<number, number>();
-  for (let i = 0; i < out; i++) tsIndex.set(allTs[i], i);
-
-  // Scatter each series' values into the merged timeline (NaN where absent).
-  const result: Float64Array[] = [allTs];
-  for (const [ts, vs] of datasets) {
-    const row = new Float64Array(out).fill(NaN);
-    for (let i = 0; i < ts.length; i++) {
-      const idx = tsIndex.get(ts[i]);
-      if (idx !== undefined) row[idx] = vs[i];
-    }
-    result.push(row);
-  }
-  return result as uPlot.AlignedData;
-}
-
-// ── Small reusable bits ───────────────────────────────────────────────────────
+// ── Small reusable UI bits ────────────────────────────────────────────────────
 
 function AxisBtn({ axis, onClick }: { axis: AxisSide; onClick: () => void }) {
   const right = axis === 'y2';
@@ -241,32 +112,19 @@ function Divider() {
   return <div className="h-px mx-1" style={{ background: 'rgb(var(--fg-rgb) / 0.08)' }} />;
 }
 
-// ── Axis range number input ───────────────────────────────────────────────────
-
-function RangeInput({
-  placeholder, value, onChange,
-}: {
-  placeholder: string;
-  value: number | null;
-  onChange: (v: number | null) => void;
+function RangeInput({ placeholder, value, onChange }: {
+  placeholder: string; value: number | null; onChange: (v: number | null) => void;
 }) {
   return (
-    <input
-      type="number"
-      placeholder={placeholder}
-      value={value ?? ''}
+    <input type="number" placeholder={placeholder} value={value ?? ''}
       onChange={(e) => onChange(e.target.value === '' ? null : parseFloat(e.target.value))}
       className="flex-1 min-w-0 px-2 py-1 rounded text-[10px] font-mono outline-none"
-      style={{
-        background: 'rgb(var(--fg-rgb) / 0.05)',
-        border: '1px solid rgb(var(--fg-rgb) / 0.1)',
-        color: 'var(--menu-text)',
-      }}
+      style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'var(--menu-text)' }}
     />
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main component ─────────────────────────────────────────────────────────────
 
 export function Telemetry() {
   const { theme } = useTheme();
@@ -277,25 +135,16 @@ export function Telemetry() {
     setAxisRange, setActive, reset,
   } = useTelemetryStore();
 
-  // Blackboard per-tree, stable reference with useShallow to avoid re-render loops.
   const rawTreeBlackboards = useBtStore(
     useShallow((s) =>
-      Object.fromEntries(
-        Object.entries(s.trees).map(([id, tree]) => [id, tree.blackboard]),
-      ),
+      Object.fromEntries(Object.entries(s.trees).map(([id, tree]) => [id, tree.blackboard])),
     ),
   );
   const allTreeBlackboards = useMemo(
     () =>
       Object.entries(rawTreeBlackboards)
         .map(([treeId, blackboard]) => ({
-          treeId,
-          blackboard,
-          // All known keys — numeric ones have live values, null ones are skeleton
-          // (Groot2 protocol gives us key names from port mappings but not values).
-          // We still show null keys so the user can pre-add them to the chart;
-          // samples will start accumulating once real values arrive via HTTP push.
-          allKeys: Object.keys(blackboard).sort(),
+          treeId, blackboard, allKeys: Object.keys(blackboard).sort(),
         }))
         .filter((t) => t.allKeys.length > 0),
     [rawTreeBlackboards],
@@ -306,229 +155,235 @@ export function Telemetry() {
   const [draftField, setDraftField] = useState('');
   const [draftAxis,  setDraftAxis]  = useState<AxisSide>('y1');
 
-  const chartRef          = useRef<HTMLDivElement>(null);
-  const tooltipRef        = useRef<HTMLDivElement>(null);
-  const uplotRef          = useRef<uPlot | null>(null);
-  const seriesSnap        = useRef(series);
-  seriesSnap.current      = series;
-  // True only when user has dragged the chart into history; cleared by Live / double-click.
-  // Scroll-wheel zoom does NOT set this — zoom changes span but keeps live-following.
-  const userPannedRef     = useRef(false);
-  const panRef            = useRef<{ startX: number; startMin: number; startMax: number } | null>(null);
-  // Wall-clock second when recording started — drives the "start-anchored" live window.
-  // This ref is intentionally reset to null on every mount so that on remount we
-  // reconstruct t0 from ring-buffer data rather than blindly using "now".
+  // chartRef: react-chartjs-2 exposes the ChartJS instance here.
+  const chartRef = useRef<ChartJS<'line'>>(null);
+
+  // Stable empty data object — passed as the data prop and never changed so
+  // react-chartjs-2 doesn't overwrite our imperatively managed datasets.
+  const stableData = useRef<ChartData<'line'>>({ datasets: [] });
+
+  // Pan state: true while user has dragged into history.
+  const isPannedRef       = useRef(false);
+  // Zoom span: null = LIVE_WINDOW_MS, otherwise the user's current scroll-zoom span.
+  const customSpanRef     = useRef<number | null>(null);
+  // Wall-clock ms when recording started — anchors the left edge until window fills.
   const recordingStartRef = useRef<number | null>(null);
+  // Snapshot for bridge event handler (avoids stale closure).
+  const seriesSnap     = useRef(series);
+  seriesSnap.current   = series;
 
-  // Returns the recording-start anchor, computing it once from existing ring-buffer
-  // data if the ref is still null (e.g. after navigating away and back).
-  const resolveT0 = (snap: SeriesConfig[]): number => {
-    if (recordingStartRef.current !== null) return recordingStartRef.current;
-    const now = Date.now() / 1000;
-    let earliest = now;
-    for (const s of snap) {
-      const [ts] = getSeriesData(s.id);
-      if (ts.length > 0 && ts[0] < earliest) earliest = ts[0];
-    }
-    recordingStartRef.current = earliest;
-    return earliest;
-  };
-
-  const snapToLive = () => {
-    userPannedRef.current = false;
-    const u = uplotRef.current;
-    if (!u) return;
-    const now = Date.now() / 1000;
-    const t0  = resolveT0(seriesSnap.current);
-    const end = Math.max(now, t0 + LIVE_WINDOW_S);
-    u.setScale('x', { min: end - LIVE_WINDOW_S, max: end });
-  };
-
-  // ── Build / tear down uPlot (also when theme or axis ranges change) ───────
+  // ── Sync Chart.js datasets whenever series config changes ─────────────────
+  // Preserves existing data by label so colour/axis changes don't lose points.
   useEffect(() => {
-    const container = chartRef.current;
-    if (!container) return;
+    const chart = chartRef.current;
+    if (!chart) return;
 
-    // Snapshot x-window before teardown so zoom span / panned position survive.
-    const prevXMin = uplotRef.current?.scales.x.min ?? null;
-    const prevXMax = uplotRef.current?.scales.x.max ?? null;
-    uplotRef.current?.destroy();
-    uplotRef.current = null;
-    if (series.length === 0) return;
-
-    const w    = Math.max(container.clientWidth, 100);
-    const h    = Math.max(container.clientHeight, 80);
-    const snap  = seriesSnap.current;
-    const tipEl = tooltipRef.current;
-
-    // Initialise with current ring-buffer data so there is no blank flash on
-    // rebuild (series add/remove, theme change, axis-range edit).
-    const u = new uPlot(
-      buildOpts(series, w, h, theme.fgRgb, axisRanges, (u) => updateTooltip(u, tipEl, container, snap)),
-      buildAlignedData(snap),
-      container,
-    );
-    uplotRef.current = u;
-
-    // Restore x-scale. Panned state: keep exact previous window. Live state:
-    // reapply the same span so a custom zoom level is preserved.
-    const now  = Date.now() / 1000;
-    const span = (prevXMin != null && prevXMax != null && prevXMax > prevXMin)
-      ? prevXMax - prevXMin : LIVE_WINDOW_S;
-    if (userPannedRef.current && prevXMin != null && prevXMax != null) {
-      u.setScale('x', { min: prevXMin, max: prevXMax });
-    } else {
-      const t0  = resolveT0(snap);
-      const end = Math.max(now, t0 + span);
-      u.setScale('x', { min: end - span, max: end });
-    }
-
-    // Scroll wheel = zoom centred on cursor.
-    // uPlot initialises cursor.left = -10 (not null), so we must explicitly
-    // check bounds — the ?? fallback won't fire for -10.
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const u = uplotRef.current;
-      if (!u) return;
-      const { min, max } = u.scales.x;
-      if (min == null || max == null) return;
-      // Zoom changes span but does NOT freeze the live-follow — the interval
-      // reads the current span from u.scales.x and advances the right edge.
-      const factor   = e.deltaY > 0 ? 1.3 : 0.77;
-      const rawLeft  = u.cursor.left;
-      const anchorPx = (rawLeft != null && rawLeft >= 0 && rawLeft <= u.width)
-        ? rawLeft : u.width / 2;
-      const cursorT  = u.posToVal(anchorPx, 'x');
-      const newMin   = cursorT - (cursorT - min) * factor;
-      const newMax   = cursorT + (max - cursorT) * factor;
-      if (newMax - newMin < 0.5) return; // don't zoom in past 0.5 s
-      u.setScale('x', { min: newMin, max: newMax });
-    };
-
-    // Left drag = pan.
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      const u = uplotRef.current;
-      if (!u) return;
-      const { min, max } = u.scales.x;
-      if (min == null || max == null) return;
-      panRef.current = { startX: e.clientX, startMin: min, startMax: max };
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      const pan = panRef.current;
-      if (!pan) return;
-      const u = uplotRef.current;
-      if (!u) return;
-      userPannedRef.current = true; // drag into history freezes the x-axis
-      const secPerPx = (pan.startMax - pan.startMin) / u.width;
-      const shift    = -(e.clientX - pan.startX) * secPerPx;
-      u.setScale('x', { min: pan.startMin + shift, max: pan.startMax + shift });
-    };
-    const onMouseUp  = () => { panRef.current = null; };
-
-    // Double-click = snap back to live window.
-    const onDblClick = () => snapToLive();
-
-    container.addEventListener('wheel',     onWheel,     { passive: false });
-    container.addEventListener('mousedown', onMouseDown);
-    container.addEventListener('mousemove', onMouseMove);
-    container.addEventListener('mouseup',   onMouseUp);
-    container.addEventListener('dblclick',  onDblClick);
-
-    const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      uplotRef.current?.setSize({ width: Math.max(Math.round(width), 100), height: Math.max(Math.round(height), 80) });
+    const dataByLabel = new Map<string, DataPoint[]>();
+    chart.data.datasets.forEach((ds) => {
+      dataByLabel.set(ds.label as string, ds.data as DataPoint[]);
     });
-    ro.observe(container);
 
-    return () => {
-      container.removeEventListener('wheel',     onWheel);
-      container.removeEventListener('mousedown', onMouseDown);
-      container.removeEventListener('mousemove', onMouseMove);
-      container.removeEventListener('mouseup',   onMouseUp);
-      container.removeEventListener('dblclick',  onDblClick);
-      ro.disconnect();
-      uplotRef.current?.destroy();
-      uplotRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    series.map((s) => `${s.id}:${s.axis}:${s.color}`).join(','),
-    theme.fgRgb,
-    axisRanges.y1.min, axisRanges.y1.max, axisRanges.y2.min, axisRanges.y2.max,
-  ]);
+    chart.data.datasets = series.map((s) => ({
+      label:           s.label,
+      data:            dataByLabel.get(s.label) ?? [],
+      borderColor:     s.color,
+      backgroundColor: 'transparent',
+      borderWidth:     1.5,
+      pointRadius:     0,
+      tension:         0.1,
+      yAxisID:         s.axis,
+      parsing:         false as const,
+    }));
 
-  // ── 10 Hz chart refresh + live-window scroll ──────────────────────────────
+    chart.update('none');
+  }, [series]);
+
+  // ── 10 Hz x-axis advance + old-data pruning ───────────────────────────────
   useEffect(() => {
     if (!active || series.length === 0) return;
-    const interval = setInterval(() => {
-      const u = uplotRef.current;
-      if (!u) return;
-      const snap = seriesSnap.current;
-      if (!snap.length) return;
-      // seriesSnap updates on every render; uPlot rebuilds asynchronously in the
-      // next effect run.  Skip this tick if the counts don't match yet — otherwise
-      // setData receives the wrong number of arrays and uPlot crashes.
-      if (u.series.length - 1 !== snap.length) return;
 
-      // true = allow y-axis to auto-fit new data range; x is overridden below.
-      u.setData(buildAlignedData(snap), true);
+    const id = setInterval(() => {
+      const chart = chartRef.current;
+      if (!chart) return;
 
-      // Advance x-axis unless user has panned into history.
-      // Use the current uPlot span so a zoomed window is preserved while the
-      // right edge follows live data. Fallback to LIVE_WINDOW_S before any
-      // zoom, or after snapToLive resets to the default span.
-      if (!userPannedRef.current) {
-        const now  = Date.now() / 1000;
-        const { min: curMin, max: curMax } = u.scales.x;
-        const span = (curMin != null && curMax != null) ? curMax - curMin : LIVE_WINDOW_S;
-        const t0   = resolveT0(snap);
-        const end  = Math.max(now, t0 + span);
-        u.setScale('x', { min: end - span, max: end });
+      // Prune points older than 3× the window (survives zoom-out).
+      const cutoff = Date.now() - LIVE_WINDOW_MS * 3;
+      for (const ds of chart.data.datasets) {
+        const data = ds.data as DataPoint[];
+        let i = 0;
+        while (i < data.length && data[i].x < cutoff) i++;
+        if (i > 0) data.splice(0, i);
       }
+
+      if (!isPannedRef.current) {
+        const now   = Date.now();
+        const span  = customSpanRef.current ?? LIVE_WINDOW_MS;
+        const start = recordingStartRef.current ?? now;
+        if (now - start < span) {
+          // Window not yet full — anchor left edge at recording start so data
+          // builds from the left rather than appearing at the far right.
+          chart.options.scales!.x!.min = start;
+          chart.options.scales!.x!.max = start + span;
+        } else {
+          // Window full — scroll normally, right edge = now.
+          chart.options.scales!.x!.min = now - span;
+          chart.options.scales!.x!.max = now;
+        }
+      }
+
+      chart.update('none');
     }, 100);
-    return () => clearInterval(interval);
+
+    return () => clearInterval(id);
   }, [active, series.length]);
 
-  // ── Bridge subscriptions ──────────────────────────────────────────────────
+  // ── Bridge subscription — push data directly into Chart.js datasets ───────
   useEffect(() => {
     startBridgeConnection();
     const unsub = subscribeToBridgeFrames(({ frame }) => {
       if (!useTelemetryStore.getState().active) return;
+      const chart = chartRef.current;
+      if (!chart) return;
+
       const snap = seriesSnap.current;
+
       if (frame.type === 'message_event') {
-        const ev = frame.data as MessageEvent;
+        const ev  = frame.data as MessageEvent;
+        const tMs = (frame.timestamp ?? Date.now() / 1000) * 1000;
         for (const s of snap) {
           if (s.source !== 'topic' || s.topic !== ev.topic) continue;
           const val = resolvePath(ev.payload, s.field);
-          if (val !== null) pushSample(s.id, ev.timestamp, val);
+          if (val === null) continue;
+          const ds = chart.data.datasets.find((d) => d.label === s.label);
+          if (ds) (ds.data as DataPoint[]).push({ x: tMs, y: val });
         }
       } else if (frame.type === 'bt_blackboard') {
-        const ev = frame.data as { vars: Record<string, unknown> };
-        const now = frame.timestamp ?? Date.now() / 1000;
+        const ev  = frame.data as { vars: Record<string, unknown> };
+        const tMs = (frame.timestamp ?? Date.now() / 1000) * 1000;
         for (const s of snap) {
           if (s.source !== 'blackboard') continue;
           const val = ev.vars[s.field];
-          if (typeof val === 'number') pushSample(s.id, now, val);
+          if (typeof val !== 'number') continue;
+          const ds = chart.data.datasets.find((d) => d.label === s.label);
+          if (ds) (ds.data as DataPoint[]).push({ x: tMs, y: val });
         }
       }
     });
     return unsub;
   }, []);
 
-  const handleStart = () => {
-    // Don't pre-set recordingStartRef here — resolveT0() will compute it from
-    // ring-buffer data on the first interval tick, which correctly handles both
-    // fresh recordings (no data → t0 = now) and resume-after-navigation
-    // (existing data → t0 = earliest ring-buffer timestamp).
-    setActive(true);
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  const snapToLive = () => {
+    isPannedRef.current  = false;
+    customSpanRef.current = null;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const now = Date.now();
+    chart.options.scales!.x!.min = now - LIVE_WINDOW_MS;
+    chart.options.scales!.x!.max = now;
+    chart.update('none');
   };
 
   const handleReset = () => {
+    isPannedRef.current       = false;
+    customSpanRef.current     = null;
     recordingStartRef.current = null;
-    userPannedRef.current     = false;
+    const chart = chartRef.current;
+    if (chart) {
+      chart.data.datasets = [];
+      chart.update('none');
+    }
     reset();
   };
+
+  // ── Chart options (rebuilt on theme or axis-range change) ─────────────────
+  const options = useMemo<ChartOptions<'line'>>(() => {
+    const grid = fgRgba(theme.fgRgb, 0.07);
+    const tick = fgRgba(theme.fgRgb, 0.40);
+
+    // fgRgb is white ('255 255 255') on dark themes, dark slate on light themes.
+    // Derive a tooltip that's always readable regardless of the active theme.
+    const isLightTheme = theme.fgRgb.startsWith('15');
+    const ttBg     = isLightTheme ? 'rgba(15,23,42,0.93)'   : 'rgba(240,245,252,0.97)';
+    const ttText   = isLightTheme ? 'rgba(230,235,245,0.92)' : 'rgba(15,23,42,0.9)';
+    const ttMuted  = isLightTheme ? 'rgba(200,210,225,0.65)' : 'rgba(15,23,42,0.5)';
+    const ttBorder = isLightTheme ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.12)';
+
+    return {
+      animation:            false,
+      responsive:           true,
+      maintainAspectRatio:  false,
+      interaction:          { mode: 'index', intersect: false },
+      parsing:              false,
+      scales: {
+        x: {
+          type: 'time',
+          time: { displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm' } },
+          min: Date.now() - LIVE_WINDOW_MS,
+          max: Date.now(),
+          ticks: { maxTicksLimit: 8, color: tick },
+          grid:  { color: grid },
+        },
+        y1: {
+          type: 'linear', position: 'left',
+          min: axisRanges.y1.min ?? undefined,
+          max: axisRanges.y1.max ?? undefined,
+          ticks: { color: tick }, grid: { color: grid },
+        },
+        y2: {
+          type: 'linear', position: 'right',
+          display: 'auto',
+          min: axisRanges.y2.min ?? undefined,
+          max: axisRanges.y2.max ?? undefined,
+          ticks: { color: tick }, grid: { drawOnChartArea: false },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: ttBg,
+          borderColor:     ttBorder,
+          borderWidth:     1,
+          titleColor:      ttMuted,
+          bodyColor:       ttText,
+          padding:         10,
+          callbacks: {
+            title: (items: TooltipItem<'line'>[]) =>
+              items.length
+                ? new Date(items[0].parsed.x ?? Date.now()).toISOString().slice(11, 23)
+                : '',
+            label: (item: TooltipItem<'line'>) => {
+              const v = item.parsed.y;
+              if (v == null || isNaN(v)) return `  ${item.dataset.label}: —`;
+              const fmt =
+                Math.abs(v) >= 10_000 || (Math.abs(v) < 0.01 && v !== 0)
+                  ? v.toExponential(3)
+                  : parseFloat(v.toPrecision(5)).toString();
+              return `  ${item.dataset.label}: ${fmt}`;
+            },
+          },
+        },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: 'x',
+            onPanStart: () => { isPannedRef.current = true; return true; },
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.1 },
+            pinch: { enabled: false },
+            mode: 'x',
+            onZoomComplete: ({ chart: c }) => {
+              // Preserve the new span so live-follow uses it.
+              const { min, max } = c.scales.x;
+              if (min != null && max != null) customSpanRef.current = max - min;
+            },
+          },
+        },
+      },
+    };
+  }, [theme.fgRgb, axisRanges]);
 
   const atLimit    = series.length >= MAX_SERIES;
   const isbbActive = (key: string) => series.some((s) => s.id === bbSeriesId(key));
@@ -545,7 +400,6 @@ export function Telemetry() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: theme.bg }}>
-
       <TopBar title="Telemetry" icon={LineChart} />
 
       <div className="absolute inset-0 flex overflow-hidden" style={{ top: '3.5rem' }}>
@@ -557,9 +411,9 @@ export function Telemetry() {
         >
           <div className="w-[252px] h-full flex flex-col overflow-y-auto p-3 gap-3 scrollbar-thin">
 
-            {/* Controls row */}
+            {/* Controls */}
             <div className="flex gap-1.5">
-              <button onClick={handleStart} disabled={active}
+              <button onClick={() => { recordingStartRef.current = Date.now(); setActive(true); }} disabled={active}
                 className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[11px] font-semibold transition-all disabled:opacity-40"
                 style={{ background: active ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.08)', border: `1px solid ${active ? 'rgba(16,185,129,0.4)' : 'rgba(16,185,129,0.2)'}`, color: '#10b981' }}
               >
@@ -577,7 +431,8 @@ export function Telemetry() {
               >
                 <RotateCcw className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => downloadCSV(series)} disabled={series.length === 0} title="Download CSV"
+              <button onClick={() => chartRef.current && downloadCSV(chartRef.current, series)}
+                disabled={series.length === 0} title="Download CSV"
                 className="w-7 flex items-center justify-center rounded transition-all disabled:opacity-30"
                 style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', color: '#06b6d4' }}
               >
@@ -596,9 +451,7 @@ export function Telemetry() {
               {series.map((s) => (
                 <div key={s.id} className="flex items-center gap-1.5 rounded px-2 py-1.5"
                   style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
-                  {/* Colour swatch — click to open native colour picker */}
-                  <label
-                    className="w-3 h-3 rounded-full shrink-0 cursor-pointer transition-all hover:scale-110"
+                  <label className="w-3 h-3 rounded-full shrink-0 cursor-pointer transition-all hover:scale-110"
                     style={{ background: s.color, outline: `2px solid ${s.color}40`, outlineOffset: 2 }}
                     title="Click to change colour"
                   >
@@ -615,7 +468,7 @@ export function Telemetry() {
               ))}
             </div>
 
-            {/* Blackboard — grouped by tree, one key per line */}
+            {/* Blackboard keys */}
             {allTreeBlackboards.length > 0 && (
               <>
                 <Divider />
@@ -632,9 +485,7 @@ export function Telemetry() {
                         const hasValue = typeof raw === 'number';
                         const valStr   = hasValue ? (raw as number).toPrecision(4) : '—';
                         return (
-                          <button
-                            key={key}
-                            disabled={atLimit && !added}
+                          <button key={key} disabled={atLimit && !added}
                             onClick={() => !added && addBlackboardSeries(key, draftAxis)}
                             className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
                             style={{
@@ -664,26 +515,18 @@ export function Telemetry() {
             <div className="flex flex-col gap-2">
               <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>Y Axes</p>
               {(['y1', 'y2'] as AxisSide[]).map((ax) => {
-                const r = axisRanges[ax];
+                const r       = axisRanges[ax];
                 const isRight = ax === 'y2';
-                const accentColor = isRight ? '#f59e0b' : '#06b6d4';
+                const accent  = isRight ? '#f59e0b' : '#06b6d4';
                 return (
                   <div key={ax} className="flex flex-col gap-1">
-                    <p className="text-[9px] font-semibold" style={{ color: accentColor }}>
+                    <p className="text-[9px] font-semibold" style={{ color: accent }}>
                       {isRight ? 'Right' : 'Left'} axis
                     </p>
                     <div className="flex gap-1.5 items-center">
-                      <RangeInput
-                        placeholder="min (auto)"
-                        value={r.min}
-                        onChange={(v) => setAxisRange(ax, v, r.max)}
-                      />
+                      <RangeInput placeholder="min (auto)" value={r.min} onChange={(v) => setAxisRange(ax, v, r.max)} />
                       <span className="text-[9px] shrink-0" style={{ color: 'var(--menu-text-dim)' }}>–</span>
-                      <RangeInput
-                        placeholder="max (auto)"
-                        value={r.max}
-                        onChange={(v) => setAxisRange(ax, r.min, v)}
-                      />
+                      <RangeInput placeholder="max (auto)" value={r.max} onChange={(v) => setAxisRange(ax, r.min, v)} />
                     </div>
                   </div>
                 );
@@ -744,20 +587,16 @@ export function Telemetry() {
           onClick={() => setPanelOpen((o) => !o)}
           className="absolute z-20 flex items-center justify-center w-4 h-10 rounded-r transition-[left] duration-200 ease-in-out"
           style={{
-            left: panelOpen ? 252 : 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            background: 'var(--menu-bg)',
-            border: `1px solid rgb(var(--fg-rgb) / 0.1)`,
-            borderLeft: 'none',
-            color: 'var(--menu-text-muted)',
+            left: panelOpen ? 252 : 0, top: '50%', transform: 'translateY(-50%)',
+            background: 'var(--menu-bg)', border: `1px solid rgb(var(--fg-rgb) / 0.1)`,
+            borderLeft: 'none', color: 'var(--menu-text-muted)',
           }}
           title={panelOpen ? 'Collapse panel' : 'Expand panel'}
         >
           {panelOpen ? <ChevronLeft className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
 
-        {/* ── Chart area ───────────────────────────────────────────────── */}
+        {/* ── Chart area ────────────────────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0 p-3 pl-6">
           {series.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
@@ -766,33 +605,23 @@ export function Telemetry() {
               </p>
             </div>
           ) : (
-            <div ref={chartRef} className="flex-1 min-h-0 rounded overflow-hidden relative"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.02)', cursor: 'crosshair' }}
+            <div className="flex-1 min-h-0 relative rounded overflow-hidden"
+              style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}
+              onDoubleClick={snapToLive}
             >
-              {/* Live / reset-view button */}
-              <button
-                onClick={snapToLive}
+              <button onClick={snapToLive}
                 className="absolute top-2 right-2 z-10 px-2 py-1 rounded text-[9px] font-bold tracking-wide transition-all"
-                style={{
-                  background: 'var(--menu-bg)',
-                  border: '1px solid rgba(6,182,212,0.3)',
-                  color: '#06b6d4',
-                  opacity: 0.75,
-                }}
+                style={{ background: 'var(--menu-bg)', border: '1px solid rgba(6,182,212,0.3)', color: '#06b6d4', opacity: 0.75 }}
                 title="Snap to live view (double-click chart)"
               >
                 ↺ Live
               </button>
 
-              <div ref={tooltipRef} className="absolute top-3 z-10 pointer-events-none rounded-lg px-3 py-2"
-                style={{
-                  display: 'none',
-                  background: 'var(--menu-bg-solid, rgba(10,20,35,0.95))',
-                  border: '1px solid rgb(var(--fg-rgb) / 0.1)',
-                  backdropFilter: 'blur(8px)',
-                  minWidth: 160,
-                  color: 'var(--menu-text)',
-                }}
+              <Line
+                ref={chartRef}
+                data={stableData.current}
+                options={options}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
               />
             </div>
           )}

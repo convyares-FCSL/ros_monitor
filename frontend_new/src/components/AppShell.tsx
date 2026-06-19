@@ -6,9 +6,14 @@ import { startBridgeConnection, stopBridgeConnection } from '../bridge/connectio
 import { initEventLog, useEventLogStore } from '../store/eventLogStore';
 import { useSettingsStore } from '../store/settingsStore';
 
-// Multi-page shell: persistent nav rail + a single mounted view. Only the
-// active route's component is rendered, so navigating away from ROS
-// Introspection unmounts it and triggers full WebGL teardown.
+// Routes that stay mounted across tab switches (keepMounted: true).
+// They are always rendered but CSS-hidden when inactive so live state
+// (chart data, WebSocket subscriptions) survives navigation.
+const KEEP_MOUNTED = ROUTES.filter((r) => r.keepMounted);
+
+// Multi-page shell: persistent nav rail + active view. Only the active
+// route's component is rendered, EXCEPT keepMounted routes which are always
+// present (hidden via CSS) so their live state is never destroyed.
 export function AppShell() {
   const { theme } = useTheme();
   const [path, navigate] = useHashRoute();
@@ -46,13 +51,28 @@ export function AppShell() {
     }}>
       <NavSidebar activePath={route.path} onNavigate={navigate} />
       <main className="relative flex-1 overflow-hidden">
-        <Suspense fallback={
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-[11px] font-mono tracking-widest uppercase" style={{ color: 'var(--page-text-dim)' }}>Loading…</div>
+        {/* keepMounted views — always in DOM, shown/hidden via display */}
+        {KEEP_MOUNTED.map((r) => (
+          <div
+            key={r.path}
+            style={{ display: route.path === r.path ? 'block' : 'none', position: 'absolute', inset: 0 }}
+          >
+            <Suspense fallback={null}>
+              <r.Component />
+            </Suspense>
           </div>
-        }>
-          <View />
-        </Suspense>
+        ))}
+
+        {/* Normal views — mount only when active */}
+        {!route.keepMounted && (
+          <Suspense fallback={
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-[11px] font-mono tracking-widest uppercase" style={{ color: 'var(--page-text-dim)' }}>Loading…</div>
+            </div>
+          }>
+            <View />
+          </Suspense>
+        )}
       </main>
     </div>
   );

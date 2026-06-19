@@ -10,6 +10,9 @@ export interface RouteDef {
   label: string;
   icon: LucideIcon;
   Component: React.ComponentType;
+  // When true, the component stays mounted across tab switches so live data
+  // (e.g. Chart.js datasets) is never lost. Hidden with CSS when inactive.
+  keepMounted?: boolean;
 }
 
 // Single source of truth for both routing and the nav sidebar. Add a page by
@@ -20,7 +23,7 @@ export const ROUTES: RouteDef[] = [
   { path: 'home', label: 'Home', icon: HomeIcon, Component: lazy(() => import('./views/Home').then((m) => ({ default: m.Home }))) },
   { path: 'ros', label: 'ROS Introspection', icon: Boxes, Component: lazy(() => import('./views/RosIntrospection').then((m) => ({ default: m.RosIntrospection }))) },
   { path: 'bt', label: 'Behavior Tree', icon: Workflow, Component: lazy(() => import('./views/BehaviorTree').then((m) => ({ default: m.BehaviorTree }))) },
-  { path: 'telemetry', label: 'Telemetry', icon: LineChart, Component: lazy(() => import('./views/Telemetry').then((m) => ({ default: m.Telemetry }))) },
+  { path: 'telemetry', label: 'Telemetry', icon: LineChart, keepMounted: true, Component: lazy(() => import('./views/Telemetry').then((m) => ({ default: m.Telemetry }))) },
   { path: 'logging', label: 'Logging', icon: ScrollText, Component: lazy(() => import('./views/Logging').then((m) => ({ default: m.Logging }))) },
   { path: 'settings', label: 'Settings', icon: SettingsIcon, Component: lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings }))) },
 ];
