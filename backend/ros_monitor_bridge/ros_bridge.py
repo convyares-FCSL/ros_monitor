@@ -12,6 +12,7 @@ ROS_AVAILABLE = False
 
 try:
     import rclpy
+    from rcl_interfaces.srv import GetParameters, ListParameters
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -105,6 +106,7 @@ if ROS_AVAILABLE:
             self.active_subscriptions = {}
             self.service_event_subscriptions = {}
             self._seen_service_events = set()
+            self._nodes_with_params: set[str] = set()
             self.hz_tracker = TopicHzTracker()
             self.graph_lock = threading.Lock()
             self.graph_timer = self.create_timer(2.0, self.update_graph_topology)
@@ -221,6 +223,16 @@ if ROS_AVAILABLE:
                     self.runtime.dispatch_event(graph_update)
                     self.sync_topic_subscriptions(filtered_topics)
                     self.sync_service_event_subscriptions(service_event_topics)
+
+                    # Fetch parameters for nodes we haven't queried yet.
+                    # Remove nodes that left the graph so they get re-fetched if they return.
+                    current_fq = set(fq_names)
+                    self._nodes_with_params -= (self._nodes_with_params - current_fq)
+                    for node_name, node_ns in raw_nodes:
+                        fq = f"{node_ns.rstrip('/')}/{node_name}".replace('//', '/')
+                        if fq not in self._nodes_with_params:
+                            self._nodes_with_params.add(fq)
+                            self._request_node_params(node_name, fq)
                 except Exception as exc:
                     self.logger.error(f"Error updating graph topology: {exc}")
                     traceback.print_exc()
@@ -235,6 +247,46 @@ if ROS_AVAILABLE:
                         "data": {"updates": updates},
                     }
                 )
+
+        def _request_node_params(self, node_name: str, fq_name: str) -> None:
+            """Fire-and-forget async parameter fetch for a single node."""
+            try:
+                list_cli = self.create_client(ListParameters, f'{fq_name}/list_parameters')
+                list_future = list_cli.call_async(ListParameters.Request())
+
+                def _on_list(fut):
+                    try:
+                        param_names = list(fut.result().result.names)
+                        if not param_names:
+                            return
+                        get_cli = self.create_client(GetParameters, f'{fq_name}/get_parameters')
+                        req = GetParameters.Request()
+                        req.names = param_names
+                        get_future = get_cli.call_async(req)
+
+                        def _on_get(gf):
+                            try:
+                                params = {}
+                                for pname, pval in zip(param_names, gf.result().values):
+                                    v = _extract_param_value(pval)
+                                    if v is not None:
+                                        params[pname] = v
+                                if params:
+                                    self.runtime.dispatch_event({
+                                        'type': 'node_params_event',
+                                        'timestamp': time.time(),
+                                        'data': {'node_name': node_name, 'params': params},
+                                    })
+                            except Exception as exc:
+                                self.logger.debug(f'get_parameters failed for {fq_name}: {exc}')
+
+                        get_future.add_done_callback(_on_get)
+                    except Exception as exc:
+                        self.logger.debug(f'list_parameters failed for {fq_name}: {exc}')
+
+                list_future.add_done_callback(_on_list)
+            except Exception as exc:
+                self.logger.debug(f'Could not request parameters for {fq_name}: {exc}')
 
         def _subscribe_rosout(self):
             # Dedicated subscription to the aggregated ROS log topic. Emits
@@ -448,6 +500,21 @@ def run_ros2_node(runtime, rate_limiter, stop_event, logger):
         if rclpy.ok():
             rclpy.shutdown()
         logger.info("ROS 2 Executor Thread terminated.")
+
+
+def _extract_param_value(pv):
+    """Convert a rcl_interfaces ParameterValue to a JSON-serialisable Python type."""
+    t = pv.type
+    if t == 1: return bool(pv.bool_value)
+    if t == 2: return int(pv.integer_value)
+    if t == 3: return float(pv.double_value)
+    if t == 4: return str(pv.string_value)
+    if t == 5: return list(pv.byte_array_value)
+    if t == 6: return list(pv.bool_array_value)
+    if t == 7: return list(pv.integer_array_value)
+    if t == 8: return list(pv.double_array_value)
+    if t == 9: return list(pv.string_array_value)
+    return None  # NOT_SET (type 0)
 
 
 def _node_name_from_transition_topic(topic_name: str) -> str:
