@@ -2,9 +2,11 @@ import { Suspense, useEffect } from 'react';
 import { useTheme, solidify } from '../hooks/useTheme';
 import { ROUTES, useHashRoute } from '../router';
 import { NavSidebar } from './NavSidebar';
-import { startBridgeConnection, stopBridgeConnection } from '../bridge/connection';
+import { startBridgeConnection, stopBridgeConnection, subscribeToBridgeFrames } from '../bridge/connection';
 import { initEventLog, useEventLogStore } from '../store/eventLogStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { useRosGraphStore } from '../store/rosGraphStore';
+import type { NodeParamsEvent } from '../types';
 
 // Routes that stay mounted across tab switches (keepMounted: true).
 // They are always rendered but CSS-hidden when inactive so live state
@@ -27,8 +29,16 @@ export function AppShell() {
     useEventLogStore.getState().setMaxEntries(useSettingsStore.getState().maxLogEntries);
     const unsubMax = useSettingsStore.subscribe((s) =>
       useEventLogStore.getState().setMaxEntries(s.maxLogEntries));
+    // Globally cache node parameters so any view (e.g. BTInspector) can read them.
+    const unsubParams = subscribeToBridgeFrames(({ frame }) => {
+      if (frame.type === 'node_params_event') {
+        const ev = frame.data as NodeParamsEvent;
+        useRosGraphStore.getState().setNodeParams(ev.node_name, ev.params);
+      }
+    });
     return () => {
       unsubMax();
+      unsubParams();
       stopLog();
       stopBridgeConnection();
     };

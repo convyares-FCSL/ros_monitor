@@ -4,6 +4,7 @@ import {
   useBtStore, useNodeDef, useNodeStatus, useActiveBlackboard,
   useActiveBlackboardTouched, useActiveBlueprint,
 } from '../store/btStore';
+import { useRosGraphStore } from '../store/rosGraphStore';
 import type { NodeStatus } from './types';
 
 const STATUS_STYLE: Record<NodeStatus, { label: string; cls: string }> = {
@@ -67,6 +68,19 @@ export function BTInspector() {
     return keys;
   }, [node]);
 
+  const nodeParams = useRosGraphStore((s) => s.nodeParams);
+
+  // Find ROS nodes that host a BT executor (declared groot_port parameter).
+  const btHostParams = useMemo(() => {
+    const hosts: Array<{ name: string; params: Record<string, unknown> }> = [];
+    nodeParams.forEach((params, name) => {
+      if ('groot_port' in params || 'groot2_port' in params) {
+        hosts.push({ name, params });
+      }
+    });
+    return hosts;
+  }, [nodeParams]);
+
   const bbEntries = Object.entries(blackboard);
   const inputs = node ? Object.entries(node.ports.input ?? {}) : [];
   const outputs = node ? Object.entries(node.ports.output ?? {}) : [];
@@ -107,6 +121,20 @@ export function BTInspector() {
                 </div>
               ))
             )}
+
+            {btHostParams.map(({ name, params }) => (
+              <div key={name} className="mt-2 pt-2 border-t border-[rgb(var(--fg-rgb)/0.07)]">
+                <div className="text-[9px] font-bold tracking-[0.15em] text-[color:rgb(var(--fg-rgb)/0.25)] px-2 pb-1">
+                  NODE PARAMS · {name}
+                </div>
+                {Object.entries(params).map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between gap-2 px-2 py-0.5 rounded">
+                    <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.4)]">{k}</span>
+                    <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.65)] truncate max-w-[55%] text-right">{String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
 
