@@ -48,6 +48,9 @@ DEFAULT_GROOT_PORT = next(iter(GROOT_NODES.values()))  # backward-compat alias
 
 REQ_FULLTREE = ord('T')
 REQ_STATUS = ord('S')
+REQ_BLACKBOARD = ord('B')
+
+_BB_POLL_PERIOD = 0.5  # 2 Hz — independent of the faster status poll
 
 REPLY_HEADER_SIZE = 22  # protocol(1)+type(1)+unique_id(4)+tree_uuid(16)
 
@@ -72,6 +75,37 @@ _RESERVED_ATTRS = {'_uid', '_fullpath', 'ID', 'name'}
 # registration name. The compact form <X/> uses the registration name as tag.
 _CATEGORY_TAGS = {'Action': 'action', 'Condition': 'condition',
                   'Control': 'control', 'Decorator': 'decorator', 'SubTree': 'subtree'}
+
+
+def extract_bb_ids(xml_str: str) -> list[str]:
+    """Return all <BehaviorTree ID="..."> values from a FULLTREE XML response.
+
+    These are the subtree instance names generateBlackboardsDump accepts in its
+    semicolon-delimited bb_list argument.
+    """
+    root = ET.fromstring(xml_str)
+    return [bt.get('ID') for bt in root.findall('BehaviorTree') if bt.get('ID')]
+
+
+def parse_blackboard_payload(payload: bytes) -> dict:
+    """Decode a BLACKBOARD ZMQ reply (MessagePack) → {tree_id: {key: value}}.
+
+    BT.CPP 4.9.0 serialises the reply with nlohmann::json::to_msgpack(), NOT
+    as UTF-8 JSON text.  The outer map key is the BehaviorTree instance name;
+    the inner map contains the blackboard entries from ExportBlackboardToJSON.
+    Keys whose C++ type has no registered JsonExporter converter are silently
+    absent from the inner map.
+
+    Returns an empty dict on any error (bad payload, missing msgpack library).
+    """
+    if not payload:
+        return {}
+    try:
+        import msgpack  # noqa: PLC0415 — optional dep, imported lazily
+        result = msgpack.unpackb(payload, raw=False)
+        return result if isinstance(result, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def build_request(req_type, unique_id):
@@ -280,6 +314,20 @@ class BTRosBridge:
             return None
         return frames[1]  # payload frame (header is frames[0])
 
+    def _request_blackboard(self, sock, bb_ids: list[str]) -> dict:
+        """Send a 2-part BLACKBOARD request; return parsed {tree_id: {key: val}}.
+
+        The REQ/REP socket is shared with the status poll — calls must never
+        overlap.  Return an empty dict on timeout or any protocol error so the
+        caller can skip cleanly.
+        """
+        bb_list = ';'.join(bb_ids).encode()
+        sock.send_multipart([build_request(REQ_BLACKBOARD, self._next_id()), bb_list])
+        frames = sock.recv_multipart()
+        if len(frames) < 2 or len(frames[0]) < REPLY_HEADER_SIZE:
+            return {}
+        return parse_blackboard_payload(frames[1])
+
     def _loop(self):
         try:
             import zmq
@@ -306,12 +354,18 @@ class BTRosBridge:
             if self._running:
                 time.sleep(2.0)
 
-    def _emit_blueprint_and_skeleton(self, blueprint, now):
-        """Emit blueprint + a skeleton blackboard populated from port remappings."""
+    def _emit_blueprint(self, blueprint, now):
+        """Emit the tree blueprint for (re-)broadcast to clients."""
         self.runtime.dispatch_event({
             "type": "bt_blueprint", "timestamp": now, "data": blueprint,
             "source": self.label,
         })
+
+    def _emit_skeleton(self, blueprint, now):
+        """Emit a skeleton blackboard (all known port keys → null) so the UI
+        shows which keys the tree uses before the first real poll returns.
+        Null values render as '—' (unavailable) in the frontend.
+        """
         skeleton = skeleton_blackboard(blueprint)
         if skeleton:
             self.runtime.dispatch_event({
@@ -325,8 +379,12 @@ class BTRosBridge:
         xml_payload = self._request(sock, REQ_FULLTREE)
         if not xml_payload:
             raise RuntimeError("no FULLTREE reply")
-        blueprint = parse_tree_xml(xml_payload.decode('utf-8'))
+        xml_str = xml_payload.decode('utf-8')
+        blueprint = parse_tree_xml(xml_str)
         tree_id = blueprint['tree_id']
+        # All BehaviorTree IDs in the XML — sent as the bb_list for BLACKBOARD requests.
+        bb_ids = extract_bb_ids(xml_str)
+
         # Include decorator uids so their status deltas aren't filtered out.
         # Decorators (Precondition, Timeout, Retry, etc.) get their own uid in
         # the Groot2 STATUS payload and need to be tracked independently.
@@ -335,19 +393,52 @@ class BTRosBridge:
             known_ids.add(n['id'])
             for dec in n.get('decorators', []):
                 known_ids.add(dec['id'])
-        self._emit_blueprint_and_skeleton(blueprint, time.time())
+
+        now = time.time()
+        self._emit_blueprint(blueprint, now)
+        self._emit_skeleton(blueprint, now)
         prefix = f"[{self.label}] " if self.label else ""
-        self.logger.info(f"BTRos: {prefix}tree '{blueprint['tree_id']}' with {len(known_ids)} nodes")
+        self.logger.info(
+            f"BTRos: {prefix}tree '{blueprint['tree_id']}' with {len(known_ids)} nodes"
+            f" | blackboard IDs: {bb_ids}"
+        )
 
         last_status = {}
-        last_blueprint = time.time()
+        last_blueprint = now
+        last_blackboard = 0.0  # force immediate first poll
 
-        # 2) Poll status, emit deltas on change.
+        # 2) Poll status and blackboard; emit deltas on change.
+        # Both share the single REQ socket — requests are strictly sequential.
         while self._running:
             now = time.time()
             if now - last_blueprint >= self.blueprint_reemit_s:
-                self._emit_blueprint_and_skeleton(blueprint, now)
+                self._emit_blueprint(blueprint, now)
+                self._emit_skeleton(blueprint, now)
                 last_blueprint = now
+
+            # Blackboard poll at 2 Hz, interleaved with the faster status poll.
+            if bb_ids and now - last_blackboard >= _BB_POLL_PERIOD:
+                try:
+                    bb_data = self._request_blackboard(sock, bb_ids)
+                except Exception:  # noqa: BLE001 — treat any ZMQ error as empty
+                    bb_data = {}
+                if bb_data:
+                    # Merge all subtree blackboards into one flat snapshot.
+                    # Start with skeleton nulls so silently-dropped keys (types
+                    # with no registered JsonExporter) show as '—' not zero.
+                    merged: dict = dict(skeleton_blackboard(blueprint))
+                    for tree_vars in bb_data.values():
+                        if isinstance(tree_vars, dict):
+                            merged.update(tree_vars)
+                    self.runtime.dispatch_event({
+                        "type": "bt_blackboard", "timestamp": now,
+                        "data": {
+                            "tree_id": tree_id, "vars": merged,
+                            "real": True,  # authoritative — frontend should replace, not merge
+                        },
+                        "source": self.label,
+                    })
+                last_blackboard = now
 
             payload = self._request(sock, REQ_STATUS)
             if payload is None:

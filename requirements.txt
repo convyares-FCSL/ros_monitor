@@ -3,3 +3,4 @@ websockets>=10,<17
 # Optional — only needed for `--btros` (the Groot2 v4 client that connects to a
 # live BehaviorTree.CPP executor). The --bt demo emitter has no extra deps.
 # pyzmq>=25
+msgpack>=1.0

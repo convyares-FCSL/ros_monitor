@@ -22,6 +22,7 @@ interface BTState {
   loadBlueprint: (bp: BTBlueprint) => void;
   applyDelta: (treeId: string, id: number, state: NodeStatus) => void;
   setBlackboard: (treeId: string, vars: Record<string, unknown>) => void;
+  replaceBlackboard: (treeId: string, vars: Record<string, unknown>) => void;
   setActiveTree: (treeId: string) => void;
   select: (id: number | null) => void;
   toggleCollapse: (id: number) => void;
@@ -85,6 +86,24 @@ export const useBtStore = create<BTState>((set) => ({
       trees: {
         ...s.trees,
         [treeId]: { ...tree, blackboard: merged, blackboardTouched: touched },
+      },
+    };
+  }),
+
+  replaceBlackboard: (treeId, vars) => set((s) => {
+    const tree = s.trees[treeId];
+    if (!tree) return s;
+    const now = Date.now();
+    const touched = { ...tree.blackboardTouched };
+    const next = { ...tree.blackboard };
+    for (const [k, v] of Object.entries(vars)) {
+      if (next[k] !== v) touched[k] = now;
+      next[k] = v;
+    }
+    return {
+      trees: {
+        ...s.trees,
+        [treeId]: { ...tree, blackboard: next, blackboardTouched: touched },
       },
     };
   }),

@@ -16,7 +16,7 @@ export function useBtSocket(paused = false): BtConnStatus {
 
   // Live bridge subscription over the shared app-level socket.
   useEffect(() => {
-    const { loadBlueprint, applyDelta, setBlackboard } = useBtStore.getState();
+    const { loadBlueprint, applyDelta, setBlackboard, replaceBlackboard } = useBtStore.getState();
 
     // Fall back to the active tree when a stream omits tree_id (single tree).
     const resolveTree = (explicit?: string) =>
@@ -41,8 +41,13 @@ export function useBtSocket(paused = false): BtConnStatus {
         }
         case 'bt_blackboard': {
           if (pausedRef.current) break;
-          const data = frame.data as { tree_id?: string; scope?: string; vars: Record<string, unknown> };
-          setBlackboard(resolveTree(data.tree_id ?? data.scope), data.vars);
+          const data = frame.data as { tree_id?: string; scope?: string; vars: Record<string, unknown>; real?: boolean };
+          const tid = resolveTree(data.tree_id ?? data.scope);
+          if (data.real) {
+            replaceBlackboard(tid, data.vars);
+          } else {
+            setBlackboard(tid, data.vars);
+          }
           break;
         }
         case 'replay_status':

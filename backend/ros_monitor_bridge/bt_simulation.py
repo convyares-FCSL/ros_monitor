@@ -19,7 +19,6 @@ clients. The blueprint is re-emitted periodically (like `graph_update`) so a
 browser that connects mid-stream still receives the structure.
 """
 
-import math
 import threading
 import time
 
@@ -30,7 +29,6 @@ FAILURE = "FAILURE"
 
 TICK_PERIOD_S = 0.4          # one engine tick
 BLUEPRINT_REEMIT_S = 3.0     # re-broadcast structure for late-joining clients
-BLACKBOARD_EMIT_S = 1.0      # blackboard snapshot cadence
 BLUEPRINT_VERSION = 1        # bump if the static structure below changes
 
 
@@ -172,14 +170,13 @@ _NODE_BY_ID = {n["id"]: n for n in _NODES}
 class TreeSpec:
     """A demo tree the emitter can run: structure + per-cycle leaf behaviour."""
 
-    def __init__(self, tree_id, version, root_id, nodes, make_leaves, blackboard_fn=None):
+    def __init__(self, tree_id, version, root_id, nodes, make_leaves):
         self.tree_id = tree_id
         self.version = version
         self.root_id = root_id
         self.nodes = nodes
         self.nodes_by_id = {n["id"]: n for n in nodes}
         self.make_leaves = make_leaves
-        self.blackboard_fn = blackboard_fn
 
 
 def blueprint_event(spec, now):
@@ -375,23 +372,6 @@ def _hydrogen_leaves(cycle):
     }
 
 
-def _hydrogen_blackboard(t):
-    return {
-        "estop_state": "CLEAR",
-        "safe_state_ack": False,
-        "bay_id": "BAY-03",
-        "vehicle_id": "HGV-4471",
-        "session_token": f"SES-{int(t // 12) % 1000:03d}",
-        "precool_target": -40.0,
-        "nozzle_temp": round(-40 + 8 * math.sin(t * 0.3), 1),
-        "pressure_limit": 700,
-        "fill_target": 6.2,
-        "dispensed": round((t % 12) / 12 * 6.2, 2),
-        "metrics_topic": "/dispenser/metrics",
-        "record_id": 1000 + int(t // 12),
-    }
-
-
 # --- Tree 2: battery pack charger (a second, smaller tree) -------------------
 _CHARGE_NODES = [
     {"id": 200, "name": "ChargeManager", "type": "Sequence", "category": "control",
@@ -426,20 +406,8 @@ def _charge_leaves(cycle):
     }
 
 
-def _charge_blackboard(t):
-    return {
-        "charger_port": "DC-FAST-2",
-        "temp_limit": 45,
-        "charge_current": 32.0,
-        "state_of_charge": round((t % 20) / 20 * 100, 1),
-        "pack_voltage": round(360 + 40 * (t % 20) / 20, 1),
-    }
-
-
-HYDROGEN_SPEC = TreeSpec(_TREE_ID, BLUEPRINT_VERSION, _ROOT_ID, _NODES,
-                         _hydrogen_leaves, _hydrogen_blackboard)
-CHARGE_SPEC = TreeSpec("PackCharger", 1, 200, _CHARGE_NODES,
-                       _charge_leaves, _charge_blackboard)
+HYDROGEN_SPEC = TreeSpec(_TREE_ID, BLUEPRINT_VERSION, _ROOT_ID, _NODES, _hydrogen_leaves)
+CHARGE_SPEC = TreeSpec("PackCharger", 1, 200, _CHARGE_NODES, _charge_leaves)
 _DEFAULT_SPECS = [HYDROGEN_SPEC, CHARGE_SPEC]
 
 
@@ -480,25 +448,13 @@ class BTSimulation:
                             self._emit_delta(spec.tree_id)))
             for spec in self.specs
         ]
-        start = time.time()
         last_blueprint = 0.0
-        last_blackboard = 0.0
         while self._running:
             now = time.time()
             if now - last_blueprint >= BLUEPRINT_REEMIT_S:
                 for spec, _ in engines:
                     self.runtime.dispatch_event(blueprint_event(spec, now))
                 last_blueprint = now
-            if now - last_blackboard >= BLACKBOARD_EMIT_S:
-                for spec, _ in engines:
-                    if spec.blackboard_fn:
-                        self.runtime.dispatch_event({
-                            "type": "bt_blackboard",
-                            "timestamp": now,
-                            "data": {"tree_id": spec.tree_id, "scope": spec.tree_id,
-                                     "vars": spec.blackboard_fn(now - start)},
-                        })
-                last_blackboard = now
             for _, engine in engines:
                 engine.tick_root()
             time.sleep(TICK_PERIOD_S)

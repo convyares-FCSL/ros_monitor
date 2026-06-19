@@ -5,9 +5,8 @@
 // Also writes a timestamped .btlog.db3 SQLite log via SqliteLogger so the
 // VCR replay pipeline can be tested against a locally generated file.
 //
-// Blackboard values are pushed to the bridge HTTP server after each tick so the
-// frontend blackboard panel shows live data (the Groot2 ZMQ protocol has no
-// blackboard retrieval; this side-channel fills the gap).
+// Also pushes a legacy HTTP blackboard snapshot to the bridge after each tick
+// (superseded by btros_bridge.py polling the Groot2 'B' ZMQ request directly).
 //
 // Build + run: see bt_demo/README.md (source ROS, cmake, ./bt_demo).
 #include <arpa/inet.h>
@@ -15,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <thread>
@@ -31,11 +31,11 @@ static constexpr const char* kTreeId = "ChargeManager";
 
 // Fire-and-forget HTTP POST of a JSON blackboard snapshot to the bridge.
 // Silently does nothing if the bridge is not listening.
-static void push_blackboard(double state_of_charge) {
+static void push_blackboard(double state_of_charge, double charge_current) {
   char body[256];
   std::snprintf(body, sizeof(body),
-    R"({"tree_id":"%s","vars":{"state_of_charge":%.2f,"charge_current":32.0,"charger_port":"DC-FAST-1"}})",
-    kTreeId, state_of_charge);
+    R"({"tree_id":"%s","vars":{"state_of_charge":%.2f,"charge_current":%.2f,"charger_port":"DC-FAST-1"}})",
+    kTreeId, state_of_charge, charge_current);
   int body_len = static_cast<int>(std::strlen(body));
 
   char req[512];
@@ -84,15 +84,27 @@ class RampCurrent : public StatefulActionNode {
 public:
   RampCurrent(const std::string& name, const NodeConfig& cfg) : StatefulActionNode(name, cfg) {}
   static PortsList providedPorts() {
-    return { InputPort<double>("target_a"), OutputPort<double>("soc") };
+    return { InputPort<double>("target_a"), OutputPort<double>("soc"), OutputPort<double>("current") };
   }
   NodeStatus onStart() override { ticks_ = 0; return NodeStatus::RUNNING; }
   NodeStatus onRunning() override {
-    if (++ticks_ < 5) { setOutput("soc", ticks_ * 20.0); return NodeStatus::RUNNING; }
+    double target_a = 32.0;
+    getInput("target_a", target_a);
+    ++ticks_;
+    if (ticks_ < 5) {
+      double soc = ticks_ * 20.0;
+      // CC phase: ramp current up to target over the first two ticks, then hold.
+      double current = (ticks_ < 2) ? target_a * (ticks_ / 2.0) : target_a;
+      setOutput("soc", soc);
+      setOutput("current", current);
+      return NodeStatus::RUNNING;
+    }
+    // CV phase: current tapers as cell voltage approaches limit.
     setOutput("soc", 100.0);
+    setOutput("current", target_a * 0.05);
     return NodeStatus::SUCCESS;
   }
-  void onHalted() override {}
+  void onHalted() override { setOutput("current", 0.0); }
 private:
   int ticks_ = 0;
 };
@@ -114,7 +126,7 @@ static const char* kTreeXML = R"(
     <Sequence name="root">
       <IsConnected port="DC-FAST-1"/>
       <Timeout msec="60000">
-        <RampCurrent target_a="32.0" soc="{state_of_charge}"/>
+        <RampCurrent target_a="32.0" soc="{state_of_charge}" current="{charge_current}"/>
       </Timeout>
       <HoldVoltage target_v="400.0"/>
     </Sequence>
@@ -123,10 +135,11 @@ static const char* kTreeXML = R"(
 )";
 
 static std::string make_log_path() {
+  std::filesystem::create_directories("bt_logs");
   std::time_t now = std::time(nullptr);
   std::tm* t = std::localtime(&now);
-  char buf[64];
-  std::strftime(buf, sizeof(buf), "bt_log_%Y%m%dT%H%M%S.btlog.db3", t);
+  char buf[80];
+  std::strftime(buf, sizeof(buf), "bt_logs/bt_log_%Y%m%dT%H%M%S.btlog.db3", t);
   return std::string(buf);
 }
 
@@ -148,17 +161,18 @@ int main() {
 
   std::cout << "bt_demo: ChargeManager publishing on Groot2 port 1667 (Ctrl-C to stop)\n";
   std::cout << "bt_demo: writing log to " << log_path << "\n";
-  std::cout << "bt_demo: pushing blackboard to bridge HTTP port " << kBridgeHttpPort << "\n";
+  std::cout << "bt_demo: legacy HTTP blackboard push enabled on port " << kBridgeHttpPort << " (superseded by ZMQ 'B' poll)\n";
 
   while (true) {
     tree.tickOnce();
 
-    // Read the live blackboard value and push it to the bridge HTTP endpoint.
-    // The Groot2 ZMQ protocol has no blackboard retrieval, so we side-channel
-    // the data via a simple HTTP POST so the dashboard panel shows live values.
-    double soc = 0.0;
-    try { soc = tree.rootBlackboard()->get<double>("state_of_charge"); } catch (...) {}
-    push_blackboard(soc);
+    // Legacy side-channel: push a snapshot to the bridge HTTP endpoint so older
+    // bridge builds still show live blackboard data.  btros_bridge.py now reads
+    // the same values directly via the Groot2 'B' ZMQ request and supersedes this.
+    double soc = 0.0, current = 0.0;
+    try { soc     = tree.rootBlackboard()->get<double>("state_of_charge"); } catch (...) {}
+    try { current = tree.rootBlackboard()->get<double>("charge_current");  } catch (...) {}
+    push_blackboard(soc, current);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
   }

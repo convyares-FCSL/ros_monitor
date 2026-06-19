@@ -169,30 +169,54 @@ function updateTooltip(
   tip.style.display = 'block';
 }
 
-// ── NaN-pad shorter series so uPlot always gets equal-length arrays ───────────
-// Always use series[0] as the x-axis (stable across renders regardless of
-// which series has the most samples).
+// ── Merge all series onto a common time axis for uPlot ───────────────────────
+// Ring buffers from getSeriesData() are already sorted, so we k-way merge them
+// in O(N·K) — no sort step needed. Each series' values are scattered into the
+// merged timeline; timestamps where a series has no sample become NaN (gap).
+// This is correct regardless of differing sample rates or start times.
 
 function buildAlignedData(snap: SeriesConfig[]): uPlot.AlignedData {
   const empty = () => new Float64Array(0);
   if (snap.length === 0) return [empty()];
-  const [ts0] = getSeriesData(snap[0].id);
-  const n = ts0.length;
-  // When there is no data yet (series just added), return correctly-sized empty arrays
-  // so uPlot gets one array per slot rather than a truncated list.
-  if (n === 0) return [empty(), ...snap.map(empty)] as uPlot.AlignedData;
-  const aligned: Float64Array[] = [ts0];
-  for (const s of snap) {
-    const [, vs] = getSeriesData(s.id);
-    if (vs.length >= n) {
-      aligned.push(vs.length === n ? vs : vs.subarray(vs.length - n));
-    } else {
-      const padded = new Float64Array(n).fill(NaN);
-      if (vs.length > 0) padded.set(vs, n - vs.length);
-      aligned.push(padded);
+
+  const datasets = snap.map((s) => getSeriesData(s.id));
+  const lens      = datasets.map(([ts]) => ts.length);
+  const totalValid = lens.reduce((a, b) => a + b, 0);
+  if (totalValid === 0) return [empty(), ...snap.map(empty)] as uPlot.AlignedData;
+
+  // K-way merge into a deduplicated, sorted timestamp array.
+  const ptrs    = new Int32Array(snap.length);
+  const tsBuf   = new Float64Array(totalValid); // over-allocated; trimmed below
+  let out = 0;
+  while (true) {
+    let minT = Infinity;
+    for (let i = 0; i < snap.length; i++) {
+      if (ptrs[i] < lens[i] && datasets[i][0][ptrs[i]] < minT)
+        minT = datasets[i][0][ptrs[i]];
+    }
+    if (minT === Infinity) break;
+    tsBuf[out++] = minT;
+    for (let i = 0; i < snap.length; i++) {
+      if (ptrs[i] < lens[i] && datasets[i][0][ptrs[i]] === minT) ptrs[i]++;
     }
   }
-  return aligned as uPlot.AlignedData;
+  const allTs = tsBuf.subarray(0, out);
+
+  // Build timestamp → merged-index lookup for O(1) scatter.
+  const tsIndex = new Map<number, number>();
+  for (let i = 0; i < out; i++) tsIndex.set(allTs[i], i);
+
+  // Scatter each series' values into the merged timeline (NaN where absent).
+  const result: Float64Array[] = [allTs];
+  for (const [ts, vs] of datasets) {
+    const row = new Float64Array(out).fill(NaN);
+    for (let i = 0; i < ts.length; i++) {
+      const idx = tsIndex.get(ts[i]);
+      if (idx !== undefined) row[idx] = vs[i];
+    }
+    result.push(row);
+  }
+  return result as uPlot.AlignedData;
 }
 
 // ── Small reusable bits ───────────────────────────────────────────────────────
@@ -287,8 +311,9 @@ export function Telemetry() {
   const uplotRef          = useRef<uPlot | null>(null);
   const seriesSnap        = useRef(series);
   seriesSnap.current      = series;
-  // True once user has manually zoomed/panned; reset by Live button or double-click.
-  const userZoomedRef     = useRef(false);
+  // True only when user has dragged the chart into history; cleared by Live / double-click.
+  // Scroll-wheel zoom does NOT set this — zoom changes span but keeps live-following.
+  const userPannedRef     = useRef(false);
   const panRef            = useRef<{ startX: number; startMin: number; startMax: number } | null>(null);
   // Wall-clock second when recording started — drives the "start-anchored" live window.
   // This ref is intentionally reset to null on every mount so that on remount we
@@ -310,7 +335,7 @@ export function Telemetry() {
   };
 
   const snapToLive = () => {
-    userZoomedRef.current = false;
+    userPannedRef.current = false;
     const u = uplotRef.current;
     if (!u) return;
     const now = Date.now() / 1000;
@@ -324,6 +349,9 @@ export function Telemetry() {
     const container = chartRef.current;
     if (!container) return;
 
+    // Snapshot x-window before teardown so zoom span / panned position survive.
+    const prevXMin = uplotRef.current?.scales.x.min ?? null;
+    const prevXMax = uplotRef.current?.scales.x.max ?? null;
     uplotRef.current?.destroy();
     uplotRef.current = null;
     if (series.length === 0) return;
@@ -333,11 +361,27 @@ export function Telemetry() {
     const snap  = seriesSnap.current;
     const tipEl = tooltipRef.current;
 
-    uplotRef.current = new uPlot(
+    // Initialise with current ring-buffer data so there is no blank flash on
+    // rebuild (series add/remove, theme change, axis-range edit).
+    const u = new uPlot(
       buildOpts(series, w, h, theme.fgRgb, axisRanges, (u) => updateTooltip(u, tipEl, container, snap)),
-      [new Float64Array(0), ...series.map(() => new Float64Array(0))],
+      buildAlignedData(snap),
       container,
     );
+    uplotRef.current = u;
+
+    // Restore x-scale. Panned state: keep exact previous window. Live state:
+    // reapply the same span so a custom zoom level is preserved.
+    const now  = Date.now() / 1000;
+    const span = (prevXMin != null && prevXMax != null && prevXMax > prevXMin)
+      ? prevXMax - prevXMin : LIVE_WINDOW_S;
+    if (userPannedRef.current && prevXMin != null && prevXMax != null) {
+      u.setScale('x', { min: prevXMin, max: prevXMax });
+    } else {
+      const t0  = resolveT0(snap);
+      const end = Math.max(now, t0 + span);
+      u.setScale('x', { min: end - span, max: end });
+    }
 
     // Scroll wheel = zoom centred on cursor.
     // uPlot initialises cursor.left = -10 (not null), so we must explicitly
@@ -348,7 +392,8 @@ export function Telemetry() {
       if (!u) return;
       const { min, max } = u.scales.x;
       if (min == null || max == null) return;
-      userZoomedRef.current = true;
+      // Zoom changes span but does NOT freeze the live-follow — the interval
+      // reads the current span from u.scales.x and advances the right edge.
       const factor   = e.deltaY > 0 ? 1.3 : 0.77;
       const rawLeft  = u.cursor.left;
       const anchorPx = (rawLeft != null && rawLeft >= 0 && rawLeft <= u.width)
@@ -374,7 +419,7 @@ export function Telemetry() {
       if (!pan) return;
       const u = uplotRef.current;
       if (!u) return;
-      userZoomedRef.current = true;
+      userPannedRef.current = true; // drag into history freezes the x-axis
       const secPerPx = (pan.startMax - pan.startMin) / u.width;
       const shift    = -(e.clientX - pan.startX) * secPerPx;
       u.setScale('x', { min: pan.startMin + shift, max: pan.startMax + shift });
@@ -426,17 +471,20 @@ export function Telemetry() {
       // setData receives the wrong number of arrays and uPlot crashes.
       if (u.series.length - 1 !== snap.length) return;
 
-      u.setData(buildAlignedData(snap), false);
+      // true = allow y-axis to auto-fit new data range; x is overridden below.
+      u.setData(buildAlignedData(snap), true);
 
-      // Keep x-axis on a live window unless user has zoomed/panned.
-      // For the first LIVE_WINDOW_S seconds, anchor the left edge at
-      // recording start so the chart fills left-to-right rather than
-      // appearing pre-filled with empty space.
-      if (!userZoomedRef.current) {
-        const now = Date.now() / 1000;
-        const t0  = resolveT0(snap);
-        const end = Math.max(now, t0 + LIVE_WINDOW_S);
-        u.setScale('x', { min: end - LIVE_WINDOW_S, max: end });
+      // Advance x-axis unless user has panned into history.
+      // Use the current uPlot span so a zoomed window is preserved while the
+      // right edge follows live data. Fallback to LIVE_WINDOW_S before any
+      // zoom, or after snapToLive resets to the default span.
+      if (!userPannedRef.current) {
+        const now  = Date.now() / 1000;
+        const { min: curMin, max: curMax } = u.scales.x;
+        const span = (curMin != null && curMax != null) ? curMax - curMin : LIVE_WINDOW_S;
+        const t0   = resolveT0(snap);
+        const end  = Math.max(now, t0 + span);
+        u.setScale('x', { min: end - span, max: end });
       }
     }, 100);
     return () => clearInterval(interval);
@@ -478,7 +526,7 @@ export function Telemetry() {
 
   const handleReset = () => {
     recordingStartRef.current = null;
-    userZoomedRef.current     = false;
+    userPannedRef.current     = false;
     reset();
   };
 
@@ -578,7 +626,7 @@ export function Telemetry() {
                       {allTreeBlackboards.length > 1 && (
                         <p className="text-[9px] font-mono px-0.5 truncate" style={{ color: 'var(--menu-text-dim)' }} title={treeId}>{treeId}</p>
                       )}
-                      {allKeys.map((key) => {
+                      {allKeys.filter((key) => typeof blackboard[key] !== 'string').map((key) => {
                         const added    = isbbActive(key);
                         const raw      = blackboard[key];
                         const hasValue = typeof raw === 'number';

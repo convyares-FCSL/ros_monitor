@@ -106,10 +106,15 @@ class CORSHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b'ok')
+            except BrokenPipeError:
+                pass  # fire-and-forget clients close before reading the response
             except Exception as exc:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(str(exc).encode())
+                try:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(str(exc).encode())
+                except BrokenPipeError:
+                    pass
         else:
             self.send_response(404)
             self.end_headers()
