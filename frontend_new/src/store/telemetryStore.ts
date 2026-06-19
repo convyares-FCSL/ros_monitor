@@ -27,12 +27,13 @@ export interface SeriesConfig {
   label: string;
   color: string;
   source: SeriesSource;
+  treeId?: string; // blackboard series only — filters events to this tree
 }
 
 export const BB_PREFIX = '__bb__';
 
-export function bbSeriesId(key: string) {
-  return `${BB_PREFIX}|${key}`;
+export function bbSeriesId(key: string, treeId?: string) {
+  return treeId ? `${BB_PREFIX}|${treeId}|${key}` : `${BB_PREFIX}|${key}`;
 }
 
 const SERIES_COLORS = [
@@ -46,7 +47,7 @@ interface TelemetryState {
   axisRanges: { y1: AxisRange; y2: AxisRange };
 
   addSeries: (topic: string, field: string, axis?: AxisSide) => boolean;
-  addBlackboardSeries: (key: string, axis?: AxisSide) => boolean;
+  addBlackboardSeries: (key: string, axis?: AxisSide, treeId?: string) => boolean;
   removeSeries: (id: string) => void;
   updateAxis: (id: string, axis: AxisSide) => void;
   updateColor: (id: string, color: string) => void;
@@ -71,16 +72,17 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
     return true;
   },
 
-  addBlackboardSeries(key, axis = 'y1') {
+  addBlackboardSeries(key, axis = 'y1', treeId?: string) {
     const { series } = get();
     if (series.length >= MAX_SERIES) return false;
-    const id = bbSeriesId(key);
+    const id = bbSeriesId(key, treeId);
     if (series.find((s) => s.id === id)) return false;
     const color = SERIES_COLORS[series.length % SERIES_COLORS.length];
+    const label = treeId ? `${treeId} › ${key}` : `bb: ${key}`;
     set({
       series: [
         ...series,
-        { id, topic: BB_PREFIX, field: key, axis, label: `bb: ${key}`, color, source: 'blackboard' },
+        { id, topic: BB_PREFIX, field: key, axis, label, color, source: 'blackboard', treeId },
       ],
     });
     return true;

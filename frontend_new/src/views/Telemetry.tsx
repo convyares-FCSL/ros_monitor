@@ -258,10 +258,11 @@ export function Telemetry() {
           if (ds) (ds.data as DataPoint[]).push({ x: tMs, y: val });
         }
       } else if (frame.type === 'bt_blackboard') {
-        const ev  = frame.data as { vars: Record<string, unknown> };
+        const ev  = frame.data as { tree_id: string; vars: Record<string, unknown> };
         const tMs = (frame.timestamp ?? Date.now() / 1000) * 1000;
         for (const s of snap) {
           if (s.source !== 'blackboard') continue;
+          if (s.treeId && ev.tree_id !== s.treeId) continue;
           const val = ev.vars[s.field];
           if (typeof val !== 'number') continue;
           const ds = chart.data.datasets.find((d) => d.label === s.label);
@@ -386,7 +387,7 @@ export function Telemetry() {
   }, [theme.fgRgb, axisRanges]);
 
   const atLimit    = series.length >= MAX_SERIES;
-  const isbbActive = (key: string) => series.some((s) => s.id === bbSeriesId(key));
+  const isbbActive = (key: string, treeId: string) => series.some((s) => s.id === bbSeriesId(key, treeId));
 
   const handleAdd = () => {
     const topic = draftTopic.trim();
@@ -480,13 +481,13 @@ export function Telemetry() {
                         <p className="text-[9px] font-mono px-0.5 truncate" style={{ color: 'var(--menu-text-dim)' }} title={treeId}>{treeId}</p>
                       )}
                       {allKeys.filter((key) => typeof blackboard[key] !== 'string').map((key) => {
-                        const added    = isbbActive(key);
+                        const added    = isbbActive(key, treeId);
                         const raw      = blackboard[key];
                         const hasValue = typeof raw === 'number';
                         const valStr   = hasValue ? (raw as number).toPrecision(4) : '—';
                         return (
                           <button key={key} disabled={atLimit && !added}
-                            onClick={() => !added && addBlackboardSeries(key, draftAxis)}
+                            onClick={() => !added && addBlackboardSeries(key, draftAxis, treeId)}
                             className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
                             style={{
                               opacity: atLimit && !added ? 0.4 : 1,
