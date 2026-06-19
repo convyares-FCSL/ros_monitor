@@ -34,6 +34,9 @@ export function AppShell() {
       if (frame.type === 'node_params_event') {
         const ev = frame.data as NodeParamsEvent;
         useRosGraphStore.getState().setNodeParams(ev.node_name, ev.params);
+      } else if (frame.type === 'bt_executor_info') {
+        const ev = frame.data as { port: number };
+        useRosGraphStore.getState().setBtConnectedPort(ev.port);
       }
     });
     return () => {

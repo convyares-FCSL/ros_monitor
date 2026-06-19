@@ -360,6 +360,14 @@ class BTRosBridge:
             "type": "bt_blueprint", "timestamp": now, "data": blueprint,
             "source": self.label,
         })
+        # Tell the frontend which ZMQ port this executor is on so it can match
+        # the active tree to the correct ROS node's parameter set.
+        self.runtime.dispatch_event({
+            "type": "bt_executor_info", "timestamp": now,
+            "data": {"host": self.host, "port": self.port,
+                     "tree_id": blueprint.get("tree_id", "")},
+            "source": self.label,
+        })
 
     def _emit_skeleton(self, blueprint, now):
         """Emit a skeleton blackboard (all known port keys → null) so the UI
