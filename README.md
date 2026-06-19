@@ -132,6 +132,23 @@ to target a specific executor.
 
 See **[bt_demo/README.md](bt_demo/README.md)** for the full standalone C++ demo.
 
+### Blackboard boolean display
+
+BT.CPP exports `bool` blackboard entries as `0`/`1` by default (via
+`std::to_string(bool)`). To display them as `true`/`false` in the dashboard,
+register a JSON exporter for `bool` **before** the tree starts:
+
+```cpp
+#include <behaviortree_cpp/json_export.h>
+
+BT::RegisterJsonDefinition<bool>(
+    [](nlohmann::json& dest, const bool& val) { dest = val; }
+);
+```
+
+This makes BT.CPP emit native JSON booleans, which the bridge forwards as
+Python `True`/`False` and the dashboard renders as `true`/`false`.
+
 ---
 
 ## Telemetry quick-start
