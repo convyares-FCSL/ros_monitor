@@ -118,7 +118,7 @@ export function BTInspector() {
     });
   }, [bbPct]));
 
-  const bbEntries = Object.entries(blackboard);
+  const bbEntries = Object.entries(blackboard).sort(([a], [b]) => a.localeCompare(b));
   const inputs = node ? Object.entries(node.ports.input ?? {}) : [];
   const outputs = node ? Object.entries(node.ports.output ?? {}) : [];
   const st = STATUS_STYLE[status ?? 'IDLE'];
