@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import {
   useBtStore, useNodeDef, useNodeStatus, useActiveBlackboard,
@@ -14,7 +14,6 @@ const STATUS_STYLE: Record<NodeStatus, { label: string; cls: string }> = {
   FAILURE: { label: 'FAILURE', cls: 'text-red-300 bg-red-500/15' },
 };
 
-// Pull the blackboard key out of a port value like "{nav_result}".
 function bbKey(value: string): string | null {
   const m = /^\{(.+)\}$/.exec(value.trim());
   return m ? m[1] : null;
@@ -24,35 +23,31 @@ const PANEL_BG = 'var(--menu-bg, rgba(15,23,42,0.85))';
 
 function useDivider(
   asideRef: React.RefObject<HTMLElement | null>,
-  setValue: (v: number) => void,
-  clamp: (raw: number) => number,
+  onMove: (rawPct: number) => void,
 ) {
   return useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    const onMove = (ev: MouseEvent) => {
+    const handler = (ev: MouseEvent) => {
       const el = asideRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const raw = ((ev.clientY - rect.top) / rect.height) * 100;
-      setValue(clamp(raw));
+      onMove(((ev.clientY - rect.top) / rect.height) * 100);
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+    const up = () => {
+      window.removeEventListener('mousemove', handler);
+      window.removeEventListener('mouseup', up);
       document.body.style.cursor = '';
     };
     document.body.style.cursor = 'row-resize';
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, [asideRef, setValue, clamp]);
+    window.addEventListener('mousemove', handler);
+    window.addEventListener('mouseup', up);
+  }, [asideRef, onMove]);
 }
 
 export function BTInspector() {
   const [open, setOpen] = useState(true);
-  // bbPct  = blackboard section height as % of total panel
-  // paramPct = node-params section height as % of total panel (only rendered when params exist)
-  const [bbPct, setBbPct] = useState(40);
-  const [paramPct, setParamPct] = useState(25);
+  const [bbPct, setBbPct] = useState(35);
+  const [paramPct, setParamPct] = useState(30);
   const asideRef = useRef<HTMLElement>(null);
 
   const selectedId = useBtStore((s) => s.selectedNodeId);
@@ -66,18 +61,38 @@ export function BTInspector() {
   const nodeParams = useRosGraphStore((s) => s.nodeParams);
   const btConnectedPort = useRosGraphStore((s) => s.btConnectedPort);
 
-  // Find the ROS node hosting the currently connected BT executor by matching
-  // its groot_port parameter to the ZMQ port the bridge connected on.
-  const hostParams = useMemo(() => {
-    if (btConnectedPort == null) return null;
-    for (const [name, params] of nodeParams) {
-      const p = params['groot_port'] ?? params['groot2_port'];
-      if (Number(p) === btConnectedPort) return { name, params };
-    }
-    return null;
-  }, [nodeParams, btConnectedPort]);
+  // All ROS nodes that expose a Groot2 port — these are BT executor nodes.
+  const btHosts = useMemo(() => {
+    const hosts: Array<{ name: string; params: Record<string, unknown> }> = [];
+    nodeParams.forEach((params, name) => {
+      if ('groot_port' in params || 'groot2_port' in params) {
+        hosts.push({ name, params });
+      }
+    });
+    hosts.sort((a, b) => a.name.localeCompare(b.name));
+    return hosts;
+  }, [nodeParams]);
 
-  // Blackboard keys the selected node's ports remap, so we can highlight them.
+  // Selected node for the param panel — defaults to the currently connected
+  // executor (matched by ZMQ port). User can override by clicking any row.
+  const [selectedParamNode, setSelectedParamNode] = useState<string | null>(null);
+  const userPickedRef = useRef(false);
+
+  useEffect(() => {
+    if (userPickedRef.current) return;
+    if (btConnectedPort == null) return;
+    for (const { name, params } of btHosts) {
+      const p = params['groot_port'] ?? params['groot2_port'];
+      if (Number(p) === btConnectedPort) {
+        setSelectedParamNode(name);
+        return;
+      }
+    }
+  }, [btHosts, btConnectedPort]);
+
+  const hostParams = selectedParamNode ? nodeParams.get(selectedParamNode) ?? null : null;
+
+  // Blackboard keys the selected BT node's ports remap.
   const referenced = useMemo(() => {
     const keys = new Set<string>();
     if (node) {
@@ -92,21 +107,16 @@ export function BTInspector() {
     return keys;
   }, [node]);
 
-  // Divider 1: between blackboard and node-params (only shown when hostParams exists).
-  // Dragging changes bbPct; paramPct stays fixed so node-inspector absorbs/releases space.
-  const startResizeBb = useDivider(
-    asideRef,
-    setBbPct,
-    useCallback((raw: number) => Math.min(70, Math.max(15, raw)), []),
-  );
+  const startResizeBb = useDivider(asideRef, useCallback((raw) => {
+    setBbPct(Math.min(70, Math.max(15, raw)));
+  }, []));
 
-  // Divider 2: between node-params and node-inspector.
-  // Dragging changes paramPct; bbPct stays fixed.
-  const startResizeParam = useDivider(
-    asideRef,
-    (raw) => setParamPct(Math.min(50, Math.max(10, raw - bbPct))),
-    useCallback((raw: number) => raw, []),
-  );
+  const startResizeParam = useDivider(asideRef, useCallback((raw) => {
+    setParamPct((prev) => {
+      const newParam = raw - bbPct;
+      return Math.min(50, Math.max(10, newParam));
+    });
+  }, [bbPct]));
 
   const bbEntries = Object.entries(blackboard);
   const inputs = node ? Object.entries(node.ports.input ?? {}) : [];
@@ -151,23 +161,51 @@ export function BTInspector() {
           </div>
         </div>
 
-        {/* ── Divider 1 + Node Params (only when host node is identified) ── */}
-        {hostParams && (
+        {/* ── Node Params (always shown once any BT host appears) ── */}
+        {btHosts.length > 0 && (
           <>
             <Divider onMouseDown={startResizeBb} />
 
             <div className="min-h-0 flex flex-col shrink-0" style={{ flexBasis: `${paramPct}%` }}>
-              <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
+              <div className="px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
                 <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE PARAMS</span>
-                <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)] truncate max-w-[55%]">{hostParams.name}</span>
               </div>
+
+              {/* Node selector list */}
+              <div className="shrink-0 border-b border-[rgb(var(--fg-rgb)/0.06)] px-2 py-1 space-y-0.5">
+                {btHosts.map(({ name }) => {
+                  const isActive = name === selectedParamNode;
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => { userPickedRef.current = true; setSelectedParamNode(name); }}
+                      className={`w-full text-left px-2 py-1 rounded text-[10px] font-mono truncate transition-colors ${
+                        isActive
+                          ? 'bg-cyan-500/15 text-cyan-300'
+                          : 'text-[color:rgb(var(--fg-rgb)/0.45)] hover:text-[color:rgb(var(--fg-rgb)/0.7)] hover:bg-[rgb(var(--fg-rgb)/0.05)]'
+                      }`}
+                    >
+                      <span className={`mr-1.5 ${isActive ? 'text-cyan-400' : 'text-[color:rgb(var(--fg-rgb)/0.2)]'}`}>
+                        {isActive ? '●' : '○'}
+                      </span>
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Params for selected node */}
               <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 space-y-0.5">
-                {Object.entries(hostParams.params).map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between gap-2 px-2 py-1 rounded">
-                    <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.45)]">{k}</span>
-                    <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)] truncate max-w-[55%] text-right">{String(v)}</span>
-                  </div>
-                ))}
+                {!hostParams ? (
+                  <Empty>select a node above</Empty>
+                ) : (
+                  Object.entries(hostParams).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between gap-2 px-2 py-1 rounded">
+                      <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.45)]">{k}</span>
+                      <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)] truncate max-w-[55%] text-right">{String(v)}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -176,7 +214,7 @@ export function BTInspector() {
         )}
 
         {/* ── Node Inspector ── */}
-        {!hostParams && <Divider onMouseDown={startResizeBb} />}
+        {btHosts.length === 0 && <Divider onMouseDown={startResizeBb} />}
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
             <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE INSPECTOR</span>

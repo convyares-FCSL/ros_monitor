@@ -224,10 +224,8 @@ if ROS_AVAILABLE:
                     self.sync_topic_subscriptions(filtered_topics)
                     self.sync_service_event_subscriptions(service_event_topics)
 
-                    # Fetch parameters for nodes we haven't queried yet.
-                    # Remove nodes that left the graph so they get re-fetched if they return.
-                    current_fq = set(fq_names)
-                    self._nodes_with_params -= (self._nodes_with_params - current_fq)
+                    # Fetch parameters once per node — never removed so re-fetches
+                    # don't happen when a node briefly drops from the graph.
                     for node_name, node_ns in raw_nodes:
                         fq = f"{node_ns.rstrip('/')}/{node_name}".replace('//', '/')
                         if fq not in self._nodes_with_params:
