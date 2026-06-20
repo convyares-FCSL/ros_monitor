@@ -482,12 +482,13 @@ class BTRosBridge:
                     for tree_vars in bb_data.values():
                         if isinstance(tree_vars, dict):
                             merged.update(tree_vars)
-                    # Coerce known-bool keys: BT.CPP 4.x exports bool as 0/1 int.
-                    # Promoting to Python bool → JSON true/false → JS boolean so
-                    # the frontend renders them as "true"/"false" not "0"/"1".
-                    for key in bool_keys:
-                        v = merged.get(key)
-                        if v is not None and not isinstance(v, bool):
+                    # Coerce bool keys: BT.CPP 4.x exports bool as 0/1 int.
+                    # A key is bool if declared as type="bool" in the TreeNodesModel
+                    # OR if it ends with the _b naming convention suffix.
+                    for key, v in merged.items():
+                        if v is None or isinstance(v, bool):
+                            continue
+                        if key in bool_keys or key.endswith('_b'):
                             try:
                                 merged[key] = bool(int(v))
                             except (TypeError, ValueError):

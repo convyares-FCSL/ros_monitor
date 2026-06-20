@@ -135,11 +135,15 @@ See **[bt_demo/README.md](bt_demo/README.md)** for the full standalone C++ demo.
 ### Blackboard boolean display
 
 BT.CPP exports `bool` blackboard entries as `0`/`1` integers. The bridge
-automatically detects which blackboard keys map to `bool` ports by reading
-the `type="bool"` attributes in the tree's `TreeNodesModel` XML and traces
-the port remappings to the actual blackboard key names. Those keys are
-promoted to `true`/`false` before the data reaches the frontend — no C++
-changes required in your executor.
+promotes them to `true`/`false` via two mechanisms (either is sufficient):
+
+1. **`_b` suffix convention** — any blackboard key ending in `_b` is treated
+   as a boolean (e.g. `valve_open_b`, `fault_active_b`).
+2. **Blueprint XML types** — if the `TreeNodesModel` declares a port with
+   `type="bool"`, the bridge traces the port remapping to the blackboard key
+   automatically.
+
+No C++ changes are required in your executor.
 
 ---
 
