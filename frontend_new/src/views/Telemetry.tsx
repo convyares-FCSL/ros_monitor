@@ -27,7 +27,7 @@ import zoomPlugin from 'chartjs-plugin-zoom';
 import { Line } from 'react-chartjs-2';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LineChart, Play, Square, RotateCcw, Plus, X, Download, ChevronLeft, ChevronRight,
+  LineChart, Play, Square, RotateCcw, Plus, X, Download, ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { TopBar } from '../components/TopBar';
@@ -112,6 +112,26 @@ function Divider() {
   return <div className="h-px mx-1" style={{ background: 'rgb(var(--fg-rgb) / 0.08)' }} />;
 }
 
+function SectionHeader({ label, open, onToggle, suffix }: {
+  label: string; open: boolean; onToggle: () => void; suffix?: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="flex items-center gap-1 w-full text-left group"
+    >
+      <ChevronDown
+        className="w-3 h-3 shrink-0 transition-transform duration-150"
+        style={{ color: 'var(--menu-text-dim)', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+      />
+      <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>
+        {label}
+      </span>
+      {suffix}
+    </button>
+  );
+}
+
 function RangeInput({ placeholder, value, onChange }: {
   placeholder: string; value: number | null; onChange: (v: number | null) => void;
 }) {
@@ -154,6 +174,11 @@ export function Telemetry() {
   const [draftTopic, setDraftTopic] = useState('');
   const [draftField, setDraftField] = useState('');
   const [draftAxis,  setDraftAxis]  = useState<AxisSide>('y1');
+
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) =>
+    setCollapsedSections((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const isSectionOpen = (key: string) => !collapsedSections.has(key);
 
   // chartRef: react-chartjs-2 exposes the ChartJS instance here.
   const chartRef = useRef<ChartJS<'line'>>(null);
@@ -445,28 +470,37 @@ export function Telemetry() {
 
             {/* Active series list */}
             <div className="flex flex-col gap-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>Series</p>
-              {series.length === 0 && (
-                <p className="text-[10px] text-center py-1" style={{ color: 'var(--menu-text-dim)' }}>No series added yet</p>
+              <SectionHeader
+                label="Series"
+                open={isSectionOpen('series')}
+                onToggle={() => toggleSection('series')}
+                suffix={series.length > 0 ? <span className="text-[9px] font-mono" style={{ color: 'var(--menu-text-dim)' }}>{series.length}</span> : undefined}
+              />
+              {isSectionOpen('series') && (
+                <>
+                  {series.length === 0 && (
+                    <p className="text-[10px] text-center py-1" style={{ color: 'var(--menu-text-dim)' }}>No series added yet</p>
+                  )}
+                  {series.map((s) => (
+                    <div key={s.id} className="flex items-center gap-1.5 rounded px-2 py-1.5"
+                      style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
+                      <label className="w-3 h-3 rounded-full shrink-0 cursor-pointer transition-all hover:scale-110"
+                        style={{ background: s.color, outline: `2px solid ${s.color}40`, outlineOffset: 2 }}
+                        title="Click to change colour"
+                      >
+                        <input type="color" value={s.color} onChange={(e) => updateColor(s.id, e.target.value)} className="sr-only" />
+                      </label>
+                      <span className="flex-1 text-[10px] font-mono truncate" style={{ color: 'var(--menu-text-muted)' }} title={s.label}>
+                        {s.label}
+                      </span>
+                      <AxisBtn axis={s.axis} onClick={() => updateAxis(s.id, s.axis === 'y1' ? 'y2' : 'y1')} />
+                      <button onClick={() => removeSeries(s.id)} title="Remove" className="opacity-40 hover:opacity-80 transition-opacity">
+                        <X className="w-3 h-3 text-red-400" />
+                      </button>
+                    </div>
+                  ))}
+                </>
               )}
-              {series.map((s) => (
-                <div key={s.id} className="flex items-center gap-1.5 rounded px-2 py-1.5"
-                  style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
-                  <label className="w-3 h-3 rounded-full shrink-0 cursor-pointer transition-all hover:scale-110"
-                    style={{ background: s.color, outline: `2px solid ${s.color}40`, outlineOffset: 2 }}
-                    title="Click to change colour"
-                  >
-                    <input type="color" value={s.color} onChange={(e) => updateColor(s.id, e.target.value)} className="sr-only" />
-                  </label>
-                  <span className="flex-1 text-[10px] font-mono truncate" style={{ color: 'var(--menu-text-muted)' }} title={s.label}>
-                    {s.label}
-                  </span>
-                  <AxisBtn axis={s.axis} onClick={() => updateAxis(s.id, s.axis === 'y1' ? 'y2' : 'y1')} />
-                  <button onClick={() => removeSeries(s.id)} title="Remove" className="opacity-40 hover:opacity-80 transition-opacity">
-                    <X className="w-3 h-3 text-red-400" />
-                  </button>
-                </div>
-              ))}
             </div>
 
             {/* Blackboard keys */}
@@ -474,38 +508,61 @@ export function Telemetry() {
               <>
                 <Divider />
                 <div className="flex flex-col gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>Blackboard</p>
-                  {allTreeBlackboards.map(({ treeId, blackboard, allKeys }) => (
-                    <div key={treeId} className="flex flex-col gap-1">
-                      {allTreeBlackboards.length > 1 && (
-                        <p className="text-[9px] font-mono px-0.5 truncate" style={{ color: 'var(--menu-text-dim)' }} title={treeId}>{treeId}</p>
-                      )}
-                      {allKeys.filter((key) => typeof blackboard[key] !== 'string').map((key) => {
-                        const added    = isbbActive(key, treeId);
-                        const raw      = blackboard[key];
-                        const hasValue = typeof raw === 'number';
-                        const valStr   = hasValue ? (raw as number).toPrecision(4) : '—';
+                  <SectionHeader
+                    label="Blackboard"
+                    open={isSectionOpen('blackboard')}
+                    onToggle={() => toggleSection('blackboard')}
+                  />
+                  {isSectionOpen('blackboard') && (
+                    <>
+                      {allTreeBlackboards.map(({ treeId, blackboard, allKeys }) => {
+                        const treeKey = `bb_tree_${treeId}`;
+                        const treeOpen = isSectionOpen(treeKey);
+                        const numericKeys = allKeys.filter((key) => typeof blackboard[key] !== 'string');
                         return (
-                          <button key={key} disabled={atLimit && !added}
-                            onClick={() => !added && addBlackboardSeries(key, draftAxis, treeId)}
-                            className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
-                            style={{
-                              opacity: atLimit && !added ? 0.4 : 1,
-                              cursor: added ? 'default' : atLimit ? 'not-allowed' : 'pointer',
-                              background: added ? 'rgba(6,182,212,0.1)' : 'rgb(var(--fg-rgb) / 0.04)',
-                              border: `1px solid ${added ? 'rgba(6,182,212,0.25)' : 'rgb(var(--fg-rgb) / 0.07)'}`,
-                              color: added ? '#06b6d4' : hasValue ? 'var(--menu-text-muted)' : 'rgb(var(--fg-rgb) / 0.35)',
-                            }}
-                            title={added ? 'Already charted' : hasValue ? `Add "${key}"` : `Add "${key}" — no live value yet`}
-                          >
-                            <span>{key}</span>
-                            <span className="tabular-nums" style={{ color: hasValue ? 'var(--menu-text-dim)' : 'rgb(var(--fg-rgb) / 0.2)' }}>{valStr}</span>
-                          </button>
+                          <div key={treeId} className="flex flex-col gap-1">
+                            {allTreeBlackboards.length > 1 ? (
+                              <button
+                                onClick={() => toggleSection(treeKey)}
+                                className="flex items-center gap-1 w-full text-left"
+                              >
+                                <ChevronDown
+                                  className="w-2.5 h-2.5 shrink-0 transition-transform duration-150"
+                                  style={{ color: 'var(--menu-text-dim)', transform: treeOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+                                />
+                                <span className="text-[9px] font-mono truncate flex-1" style={{ color: 'var(--menu-text-dim)' }} title={treeId}>{treeId}</span>
+                                <span className="text-[9px] font-mono" style={{ color: 'var(--menu-text-dim)' }}>{numericKeys.length}</span>
+                              </button>
+                            ) : null}
+                            {(allTreeBlackboards.length === 1 || treeOpen) && numericKeys.map((key) => {
+                              const added    = isbbActive(key, treeId);
+                              const raw      = blackboard[key];
+                              const hasValue = typeof raw === 'number' || typeof raw === 'boolean';
+                              const valStr   = typeof raw === 'boolean' ? String(raw) : typeof raw === 'number' ? raw.toPrecision(4) : '—';
+                              return (
+                                <button key={key} disabled={atLimit && !added}
+                                  onClick={() => !added && addBlackboardSeries(key, draftAxis, treeId)}
+                                  className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
+                                  style={{
+                                    opacity: atLimit && !added ? 0.4 : 1,
+                                    cursor: added ? 'default' : atLimit ? 'not-allowed' : 'pointer',
+                                    background: added ? 'rgba(6,182,212,0.1)' : 'rgb(var(--fg-rgb) / 0.04)',
+                                    border: `1px solid ${added ? 'rgba(6,182,212,0.25)' : 'rgb(var(--fg-rgb) / 0.07)'}`,
+                                    color: added ? '#06b6d4' : hasValue ? 'var(--menu-text-muted)' : 'rgb(var(--fg-rgb) / 0.35)',
+                                  }}
+                                  title={added ? 'Already charted' : hasValue ? `Add "${key}"` : `Add "${key}" — no live value yet`}
+                                >
+                                  <span>{key}</span>
+                                  <span className="tabular-nums" style={{ color: hasValue ? 'var(--menu-text-dim)' : 'rgb(var(--fg-rgb) / 0.2)' }}>{valStr}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         );
                       })}
-                    </div>
-                  ))}
-                  {atLimit && <p className="text-[9px]" style={{ color: '#f59e0b' }}>Series limit ({MAX_SERIES}) reached</p>}
+                      {atLimit && <p className="text-[9px]" style={{ color: '#f59e0b' }}>Series limit ({MAX_SERIES}) reached</p>}
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -514,8 +571,8 @@ export function Telemetry() {
 
             {/* Y-axis range overrides */}
             <div className="flex flex-col gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>Y Axes</p>
-              {(['y1', 'y2'] as AxisSide[]).map((ax) => {
+              <SectionHeader label="Y Axes" open={isSectionOpen('yaxes')} onToggle={() => toggleSection('yaxes')} />
+              {isSectionOpen('yaxes') && (['y1', 'y2'] as AxisSide[]).map((ax) => {
                 const r       = axisRanges[ax];
                 const isRight = ax === 'y2';
                 const accent  = isRight ? '#f59e0b' : '#06b6d4';
@@ -538,42 +595,49 @@ export function Telemetry() {
 
             {/* Add ROS topic */}
             <div className="flex flex-col gap-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--menu-text-dim)' }}>
-                ROS Topic {atLimit && <span style={{ color: '#f59e0b' }}>(limit reached)</span>}
-              </p>
-              <input type="text" value={draftTopic} onChange={(e) => setDraftTopic(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAdd()} disabled={atLimit} placeholder="/topic/name"
-                className="w-full px-2 py-1 rounded text-[11px] font-mono outline-none disabled:opacity-40"
-                style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'var(--menu-text)' }}
+              <SectionHeader
+                label="ROS Topic"
+                open={isSectionOpen('rostopic')}
+                onToggle={() => toggleSection('rostopic')}
+                suffix={atLimit ? <span className="text-[9px]" style={{ color: '#f59e0b' }}>limit</span> : undefined}
               />
-              <input type="text" value={draftField} onChange={(e) => setDraftField(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAdd()} disabled={atLimit} placeholder="field.dot.path (optional)"
-                className="w-full px-2 py-1 rounded text-[11px] font-mono outline-none disabled:opacity-40"
-                style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'var(--menu-text)' }}
-              />
-              <div className="flex gap-1.5">
-                {(['y1', 'y2'] as AxisSide[]).map((ax) => {
-                  const right = ax === 'y2';
-                  return (
-                    <button key={ax} onClick={() => setDraftAxis(ax)}
-                      className="flex-1 py-1 rounded text-[10px] font-bold transition-all"
-                      style={{
-                        background: draftAxis === ax ? right ? 'rgba(245,158,11,0.15)' : 'rgba(6,182,212,0.15)' : 'rgb(var(--fg-rgb) / 0.04)',
-                        border: `1px solid ${draftAxis === ax ? right ? 'rgba(245,158,11,0.35)' : 'rgba(6,182,212,0.35)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
-                        color: draftAxis === ax ? right ? '#f59e0b' : '#06b6d4' : 'var(--menu-text-dim)',
-                      }}
+              {isSectionOpen('rostopic') && (
+                <>
+                  <input type="text" value={draftTopic} onChange={(e) => setDraftTopic(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAdd()} disabled={atLimit} placeholder="/topic/name"
+                    className="w-full px-2 py-1 rounded text-[11px] font-mono outline-none disabled:opacity-40"
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'var(--menu-text)' }}
+                  />
+                  <input type="text" value={draftField} onChange={(e) => setDraftField(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAdd()} disabled={atLimit} placeholder="field.dot.path (optional)"
+                    className="w-full px-2 py-1 rounded text-[11px] font-mono outline-none disabled:opacity-40"
+                    style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'var(--menu-text)' }}
+                  />
+                  <div className="flex gap-1.5">
+                    {(['y1', 'y2'] as AxisSide[]).map((ax) => {
+                      const right = ax === 'y2';
+                      return (
+                        <button key={ax} onClick={() => setDraftAxis(ax)}
+                          className="flex-1 py-1 rounded text-[10px] font-bold transition-all"
+                          style={{
+                            background: draftAxis === ax ? right ? 'rgba(245,158,11,0.15)' : 'rgba(6,182,212,0.15)' : 'rgb(var(--fg-rgb) / 0.04)',
+                            border: `1px solid ${draftAxis === ax ? right ? 'rgba(245,158,11,0.35)' : 'rgba(6,182,212,0.35)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+                            color: draftAxis === ax ? right ? '#f59e0b' : '#06b6d4' : 'var(--menu-text-dim)',
+                          }}
+                        >
+                          {right ? 'Right' : 'Left'}
+                        </button>
+                      );
+                    })}
+                    <button onClick={handleAdd} disabled={atLimit || !draftTopic.trim()}
+                      className="w-8 flex items-center justify-center rounded transition-all disabled:opacity-30"
+                      style={{ background: 'rgba(6,182,212,0.15)', border: '1px solid rgba(6,182,212,0.3)', color: '#06b6d4' }}
                     >
-                      {right ? 'Right' : 'Left'}
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
-                  );
-                })}
-                <button onClick={handleAdd} disabled={atLimit || !draftTopic.trim()}
-                  className="w-8 flex items-center justify-center rounded transition-all disabled:opacity-30"
-                  style={{ background: 'rgba(6,182,212,0.15)', border: '1px solid rgba(6,182,212,0.3)', color: '#06b6d4' }}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                  </div>
+                </>
+              )}
             </div>
 
             <p className="text-[9px] leading-relaxed mt-auto" style={{ color: 'var(--menu-text-dim)' }}>
