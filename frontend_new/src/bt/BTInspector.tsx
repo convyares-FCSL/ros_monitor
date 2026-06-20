@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, X } from 'lucide-react';
 import {
   useBtStore, useNodeDef, useNodeStatus, useActiveBlackboard,
   useActiveBlackboardTouched, useActiveBlueprint,
@@ -20,6 +20,17 @@ function bbKey(value: string): string | null {
 }
 
 const PANEL_BG = 'var(--menu-bg, rgba(15,23,42,0.85))';
+
+function groupByPrefix(keys: string[]): Array<{ prefix: string; keys: string[] }> {
+  const map = new Map<string, string[]>();
+  for (const key of keys) {
+    const idx = key.indexOf('_');
+    const prefix = idx > 0 ? key.slice(0, idx) : key;
+    if (!map.has(prefix)) map.set(prefix, []);
+    map.get(prefix)!.push(key);
+  }
+  return Array.from(map.entries()).map(([prefix, ks]) => ({ prefix, keys: ks }));
+}
 
 function useDivider(
   asideRef: React.RefObject<HTMLElement | null>,
@@ -46,8 +57,8 @@ function useDivider(
 
 export function BTInspector() {
   const [open, setOpen] = useState(true);
-  const [bbPct, setBbPct] = useState(35);
-  const [paramPct, setParamPct] = useState(30);
+  const [bbPct, setBbPct] = useState(33);
+  const [paramPct, setParamPct] = useState(33);
   const asideRef = useRef<HTMLElement>(null);
 
   const selectedId = useBtStore((s) => s.selectedNodeId);
@@ -108,17 +119,32 @@ export function BTInspector() {
   }, [node]);
 
   const startResizeBb = useDivider(asideRef, useCallback((raw) => {
-    setBbPct(Math.min(70, Math.max(15, raw)));
-  }, []));
+    // Leave at least 15% each for params and inspector.
+    setBbPct((prev) => Math.max(10, Math.min(100 - paramPct - 15, raw)));
+  }, [paramPct]));
 
   const startResizeParam = useDivider(asideRef, useCallback((raw) => {
-    setParamPct((prev) => {
-      const newParam = raw - bbPct;
-      return Math.min(50, Math.max(10, newParam));
-    });
+    // raw = distance from top as % of aside; subtract bb to get param height.
+    // Clamp so inspector keeps at least 15%.
+    setParamPct(Math.max(10, Math.min(100 - bbPct - 15, raw - bbPct)));
   }, [bbPct]));
 
-  const bbEntries = Object.entries(blackboard).sort(([a], [b]) => a.localeCompare(b));
+  const [openBbGroups, setOpenBbGroups] = useState<Set<string>>(new Set());
+  const [openParamGroups, setOpenParamGroups] = useState<Set<string>>(new Set());
+  const toggleBbGroup = (p: string) =>
+    setOpenBbGroups((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
+  const toggleParamGroup = (p: string) =>
+    setOpenParamGroups((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
+
+  const bbGroups = useMemo(
+    () => groupByPrefix(Object.keys(blackboard).sort()),
+    [blackboard],
+  );
+  const paramGroups = useMemo(
+    () => hostParams ? groupByPrefix(Object.keys(hostParams).sort()) : [],
+    [hostParams],
+  );
+
   const inputs = node ? Object.entries(node.ports.input ?? {}) : [];
   const outputs = node ? Object.entries(node.ports.output ?? {}) : [];
   const st = STATUS_STYLE[status ?? 'IDLE'];
@@ -146,75 +172,106 @@ export function BTInspector() {
             {blueprint && <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.35)] truncate max-w-[55%]">{blueprint.tree_id}</span>}
           </div>
           <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 space-y-0.5">
-            {bbEntries.length === 0 ? (
+            {bbGroups.length === 0 ? (
               <Empty>no blackboard data</Empty>
-            ) : (
-              bbEntries.map(([k, v]) => (
-                <div key={k} className={`flex items-center justify-between gap-2 px-2 py-1 rounded ${referenced.has(k) ? 'bg-cyan-500/10 border border-cyan-500/20' : ''}`}>
-                  <span className={`text-[10px] font-mono truncate ${referenced.has(k) ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.55)]'}`}>{k}</span>
-                  <span key={touched[k] ?? 0} className="bt-bb-value text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.8)] truncate max-w-[55%] text-right">
-                    {formatVal(v)}
-                  </span>
+            ) : bbGroups.map(({ prefix, keys }) => {
+              if (keys.length === 1) {
+                const k = keys[0];
+                const v = blackboard[k];
+                return (
+                  <div key={k} className={`flex items-center justify-between gap-2 px-2 py-1 rounded ${referenced.has(k) ? 'bg-cyan-500/10 border border-cyan-500/20' : ''}`}>
+                    <span className={`text-[10px] font-mono truncate ${referenced.has(k) ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.55)]'}`}>{k}</span>
+                    <span key={touched[k] ?? 0} className="bt-bb-value text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.8)] truncate max-w-[55%] text-right">{formatVal(v)}</span>
+                  </div>
+                );
+              }
+              const isOpen = openBbGroups.has(prefix);
+              return (
+                <div key={prefix}>
+                  <button onClick={() => toggleBbGroup(prefix)} className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-[rgb(var(--fg-rgb)/0.04)]">
+                    <ChevronDown className="w-2.5 h-2.5 shrink-0 transition-transform duration-150" style={{ color: 'rgb(var(--fg-rgb)/0.35)', transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+                    <span className="flex-1 text-[9px] font-mono font-semibold text-[color:rgb(var(--fg-rgb)/0.4)]">{prefix}</span>
+                    <span className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.25)]">{keys.length}</span>
+                  </button>
+                  {isOpen && keys.map((k) => {
+                    const v = blackboard[k];
+                    return (
+                      <div key={k} className={`flex items-center justify-between gap-2 pl-5 pr-2 py-1 rounded ${referenced.has(k) ? 'bg-cyan-500/10 border border-cyan-500/20' : ''}`}>
+                        <span className={`text-[10px] font-mono truncate ${referenced.has(k) ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.55)]'}`}>{k}</span>
+                        <span key={touched[k] ?? 0} className="bt-bb-value text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.8)] truncate max-w-[55%] text-right">{formatVal(v)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))
-            )}
+              );
+            })}
           </div>
         </div>
 
-        {/* ── Node Params (always shown once any BT host appears) ── */}
-        {btHosts.length > 0 && (
-          <>
-            <Divider onMouseDown={startResizeBb} />
-
-            <div className="min-h-0 flex flex-col shrink-0" style={{ flexBasis: `${paramPct}%` }}>
-              <div className="px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
-                <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE PARAMS</span>
+        {/* ── Node Params ── */}
+        <Divider onMouseDown={startResizeBb} />
+        <div className="min-h-0 flex flex-col shrink-0" style={{ flexBasis: `${paramPct}%` }}>
+          <div className="px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
+            <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE PARAMS</span>
+          </div>
+          {btHosts.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Empty>no BT executor nodes</Empty>
+            </div>
+          ) : (
+            <>
+              {/* Node selector dropdown */}
+              <div className="shrink-0 border-b border-[rgb(var(--fg-rgb)/0.06)] px-2 py-2">
+                <select
+                  value={selectedParamNode ?? ''}
+                  onChange={(e) => { userPickedRef.current = true; setSelectedParamNode(e.target.value || null); }}
+                  className="w-full px-2 py-1 rounded text-[10px] font-mono outline-none"
+                  style={{ background: 'var(--menu-bg)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.75)' }}
+                >
+                  <option value="">— select node —</option>
+                  {btHosts.map(({ name }) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
               </div>
-
-              {/* Node selector list */}
-              <div className="shrink-0 border-b border-[rgb(var(--fg-rgb)/0.06)] px-2 py-1 space-y-0.5">
-                {btHosts.map(({ name }) => {
-                  const isActive = name === selectedParamNode;
-                  return (
-                    <button
-                      key={name}
-                      onClick={() => { userPickedRef.current = true; setSelectedParamNode(name); }}
-                      className={`w-full text-left px-2 py-1 rounded text-[10px] font-mono truncate transition-colors ${
-                        isActive
-                          ? 'bg-cyan-500/15 text-cyan-300'
-                          : 'text-[color:rgb(var(--fg-rgb)/0.45)] hover:text-[color:rgb(var(--fg-rgb)/0.7)] hover:bg-[rgb(var(--fg-rgb)/0.05)]'
-                      }`}
-                    >
-                      <span className={`mr-1.5 ${isActive ? 'text-cyan-400' : 'text-[color:rgb(var(--fg-rgb)/0.2)]'}`}>
-                        {isActive ? '●' : '○'}
-                      </span>
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
-
               {/* Params for selected node */}
               <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 space-y-0.5">
                 {!hostParams ? (
                   <Empty>select a node above</Empty>
-                ) : (
-                  Object.entries(hostParams).map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between gap-2 px-2 py-1 rounded">
-                      <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.45)]">{k}</span>
-                      <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)] truncate max-w-[55%] text-right">{String(v)}</span>
+                ) : paramGroups.map(({ prefix, keys }) => {
+                  if (keys.length === 1) {
+                    const k = keys[0];
+                    return (
+                      <div key={k} className="flex items-center justify-between gap-2 px-2 py-1 rounded">
+                        <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.45)]">{k}</span>
+                        <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)] truncate max-w-[55%] text-right">{String(hostParams[k])}</span>
+                      </div>
+                    );
+                  }
+                  const isOpen = openParamGroups.has(prefix);
+                  return (
+                    <div key={prefix}>
+                      <button onClick={() => toggleParamGroup(prefix)} className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-[rgb(var(--fg-rgb)/0.04)]">
+                        <ChevronDown className="w-2.5 h-2.5 shrink-0 transition-transform duration-150" style={{ color: 'rgb(var(--fg-rgb)/0.35)', transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+                        <span className="flex-1 text-[9px] font-mono font-semibold text-[color:rgb(var(--fg-rgb)/0.4)]">{prefix}</span>
+                        <span className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.25)]">{keys.length}</span>
+                      </button>
+                      {isOpen && keys.map((k) => (
+                        <div key={k} className="flex items-center justify-between gap-2 pl-5 pr-2 py-1 rounded">
+                          <span className="text-[10px] font-mono truncate text-[color:rgb(var(--fg-rgb)/0.45)]">{k}</span>
+                          <span className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.7)] truncate max-w-[55%] text-right">{String(hostParams[k])}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))
-                )}
+                  );
+                })}
               </div>
-            </div>
-
-            <Divider onMouseDown={startResizeParam} />
-          </>
-        )}
+            </>
+          )}
+        </div>
 
         {/* ── Node Inspector ── */}
-        {btHosts.length === 0 && <Divider onMouseDown={startResizeBb} />}
+        <Divider onMouseDown={startResizeParam} />
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgb(var(--fg-rgb)/0.07)]">
             <span className="text-[9px] font-bold tracking-[0.18em] text-[color:rgb(var(--fg-rgb)/0.4)]">NODE INSPECTOR</span>

@@ -112,6 +112,17 @@ function Divider() {
   return <div className="h-px mx-1" style={{ background: 'rgb(var(--fg-rgb) / 0.08)' }} />;
 }
 
+function groupByPrefix(keys: string[]): Array<{ prefix: string; keys: string[] }> {
+  const map = new Map<string, string[]>();
+  for (const key of keys) {
+    const idx = key.indexOf('_');
+    const prefix = idx > 0 ? key.slice(0, idx) : key;
+    if (!map.has(prefix)) map.set(prefix, []);
+    map.get(prefix)!.push(key);
+  }
+  return Array.from(map.entries()).map(([prefix, ks]) => ({ prefix, keys: ks }));
+}
+
 function SectionHeader({ label, open, onToggle, suffix }: {
   label: string; open: boolean; onToggle: () => void; suffix?: React.ReactNode;
 }) {
@@ -166,7 +177,8 @@ export function Telemetry() {
         .map(([treeId, blackboard]) => ({
           treeId, blackboard, allKeys: Object.keys(blackboard).sort(),
         }))
-        .filter((t) => t.allKeys.length > 0),
+        .filter((t) => t.allKeys.length > 0)
+        .sort((a, b) => a.treeId.localeCompare(b.treeId)),
     [rawTreeBlackboards],
   );
 
@@ -175,10 +187,10 @@ export function Telemetry() {
   const [draftField, setDraftField] = useState('');
   const [draftAxis,  setDraftAxis]  = useState<AxisSide>('y1');
 
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const toggleSection = (key: string) =>
-    setCollapsedSections((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  const isSectionOpen = (key: string) => !collapsedSections.has(key);
+    setOpenSections((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const isSectionOpen = (key: string) => openSections.has(key);
 
   // chartRef: react-chartjs-2 exposes the ChartJS instance here.
   const chartRef = useRef<ChartJS<'line'>>(null);
@@ -534,27 +546,42 @@ export function Telemetry() {
                                 <span className="text-[9px] font-mono" style={{ color: 'var(--menu-text-dim)' }}>{numericKeys.length}</span>
                               </button>
                             ) : null}
-                            {(allTreeBlackboards.length === 1 || treeOpen) && numericKeys.map((key) => {
-                              const added    = isbbActive(key, treeId);
-                              const raw      = blackboard[key];
-                              const hasValue = typeof raw === 'number' || typeof raw === 'boolean';
-                              const valStr   = typeof raw === 'boolean' ? String(raw) : typeof raw === 'number' ? raw.toPrecision(4) : '—';
+                            {(allTreeBlackboards.length === 1 || treeOpen) && groupByPrefix(numericKeys).map(({ prefix, keys: groupKeys }) => {
+                              const renderKey = (key: string) => {
+                                const added    = isbbActive(key, treeId);
+                                const raw      = blackboard[key];
+                                const hasValue = typeof raw === 'number' || typeof raw === 'boolean';
+                                const valStr   = typeof raw === 'boolean' ? String(raw) : typeof raw === 'number' ? raw.toPrecision(4) : '—';
+                                return (
+                                  <button key={key} disabled={atLimit && !added}
+                                    onClick={() => !added && addBlackboardSeries(key, draftAxis, treeId)}
+                                    className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
+                                    style={{
+                                      opacity: atLimit && !added ? 0.4 : 1,
+                                      cursor: added ? 'default' : atLimit ? 'not-allowed' : 'pointer',
+                                      background: added ? 'rgba(6,182,212,0.1)' : 'rgb(var(--fg-rgb) / 0.04)',
+                                      border: `1px solid ${added ? 'rgba(6,182,212,0.25)' : 'rgb(var(--fg-rgb) / 0.07)'}`,
+                                      color: added ? '#06b6d4' : hasValue ? 'var(--menu-text-muted)' : 'rgb(var(--fg-rgb) / 0.35)',
+                                    }}
+                                    title={added ? 'Already charted' : hasValue ? `Add "${key}"` : `Add "${key}" — no live value yet`}
+                                  >
+                                    <span>{key}</span>
+                                    <span className="tabular-nums" style={{ color: hasValue ? 'var(--menu-text-dim)' : 'rgb(var(--fg-rgb) / 0.2)' }}>{valStr}</span>
+                                  </button>
+                                );
+                              };
+                              if (groupKeys.length === 1) return renderKey(groupKeys[0]);
+                              const groupId = `bb_${treeId}_${prefix}`;
+                              const grpOpen = isSectionOpen(groupId);
                               return (
-                                <button key={key} disabled={atLimit && !added}
-                                  onClick={() => !added && addBlackboardSeries(key, draftAxis, treeId)}
-                                  className="flex items-center justify-between w-full px-2 py-1.5 rounded text-[10px] font-mono transition-all text-left"
-                                  style={{
-                                    opacity: atLimit && !added ? 0.4 : 1,
-                                    cursor: added ? 'default' : atLimit ? 'not-allowed' : 'pointer',
-                                    background: added ? 'rgba(6,182,212,0.1)' : 'rgb(var(--fg-rgb) / 0.04)',
-                                    border: `1px solid ${added ? 'rgba(6,182,212,0.25)' : 'rgb(var(--fg-rgb) / 0.07)'}`,
-                                    color: added ? '#06b6d4' : hasValue ? 'var(--menu-text-muted)' : 'rgb(var(--fg-rgb) / 0.35)',
-                                  }}
-                                  title={added ? 'Already charted' : hasValue ? `Add "${key}"` : `Add "${key}" — no live value yet`}
-                                >
-                                  <span>{key}</span>
-                                  <span className="tabular-nums" style={{ color: hasValue ? 'var(--menu-text-dim)' : 'rgb(var(--fg-rgb) / 0.2)' }}>{valStr}</span>
-                                </button>
+                                <div key={prefix}>
+                                  <button onClick={() => toggleSection(groupId)} className="flex items-center gap-1 w-full text-left px-1 py-1 rounded hover:bg-[rgb(var(--fg-rgb)/0.04)]">
+                                    <ChevronDown className="w-2.5 h-2.5 shrink-0 transition-transform duration-150" style={{ color: 'var(--menu-text-dim)', transform: grpOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+                                    <span className="flex-1 text-[9px] font-mono font-semibold" style={{ color: 'var(--menu-text-dim)' }}>{prefix}</span>
+                                    <span className="text-[9px] font-mono" style={{ color: 'var(--menu-text-dim)' }}>{groupKeys.length}</span>
+                                  </button>
+                                  {grpOpen && groupKeys.map(renderKey)}
+                                </div>
                               );
                             })}
                           </div>
