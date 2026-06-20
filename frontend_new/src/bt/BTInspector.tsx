@@ -5,7 +5,7 @@ import {
   useActiveBlackboardTouched, useActiveBlueprint,
 } from '../store/btStore';
 import { useRosGraphStore } from '../store/rosGraphStore';
-import type { NodeStatus } from './types';
+import type { BTDecorator, NodeStatus } from './types';
 
 const STATUS_STYLE: Record<NodeStatus, { label: string; cls: string }> = {
   IDLE: { label: 'IDLE', cls: 'text-[color:rgb(var(--fg-rgb)/0.5)] bg-[rgb(var(--fg-rgb)/0.05)]' },
@@ -103,7 +103,8 @@ export function BTInspector() {
 
   const hostParams = selectedParamNode ? nodeParams.get(selectedParamNode) ?? null : null;
 
-  // Blackboard keys the selected BT node's ports remap.
+  // Blackboard keys the selected BT node's ports remap — including those
+  // referenced by its decorators (e.g. a Precondition's `if` expression).
   const referenced = useMemo(() => {
     const keys = new Set<string>();
     if (node) {
@@ -111,6 +112,12 @@ export function BTInspector() {
         if (!grp) continue;
         for (const v of Object.values(grp)) {
           const k = bbKey(v);
+          if (k) keys.add(k);
+        }
+      }
+      for (const dec of node.decorators) {
+        for (const v of Object.values(dec.ports ?? {})) {
+          const k = bbKey(String(v));
           if (k) keys.add(k);
         }
       }
@@ -293,6 +300,13 @@ export function BTInspector() {
                   <div className="text-sm font-bold text-[color:rgb(var(--fg-rgb))] truncate">{node.name}</div>
                   <div className="text-[10px] font-mono text-[color:rgb(var(--fg-rgb)/0.4)] truncate">{node.type} · {node.category}</div>
                 </div>
+                {node.decorators.length > 0 && (
+                  <Section title="DECORATORS">
+                    <div className="space-y-1.5">
+                      {node.decorators.map((dec) => <DecoratorRow key={dec.id} dec={dec} />)}
+                    </div>
+                  </Section>
+                )}
                 <Section title="PORT REMAPPINGS">
                   {inputs.length === 0 && outputs.length === 0 ? (
                     <Empty>no ports</Empty>
@@ -332,6 +346,43 @@ function Divider({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }
       title="Drag to resize"
     >
       <span className="w-8 h-0.5 rounded-full bg-[rgb(var(--fg-rgb)/0.2)] group-hover:bg-[rgb(var(--fg-rgb)/0.4)] transition-colors" />
+    </div>
+  );
+}
+
+// One decorator wrapping the selected node (Precondition, Timeout, Retry, …).
+// Subscribes to its own uid's status so it lights up live, and lists its
+// configured attributes — the condition expression, timeout, attempt count, etc.
+function DecoratorRow({ dec }: { dec: BTDecorator }) {
+  const status = useNodeStatus(dec.id);
+  const st = STATUS_STYLE[status ?? 'IDLE'];
+  const attrs = Object.entries(dec.ports ?? {});
+  return (
+    <div className="rounded border border-[rgb(var(--fg-rgb)/0.08)] px-2 py-1.5 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold text-[color:rgb(var(--fg-rgb)/0.85)] truncate">{dec.type}</span>
+        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold tracking-wider shrink-0 ${st.cls}`}>{st.label}</span>
+      </div>
+      {dec.name && dec.name !== dec.type && (
+        <div className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.4)] truncate">{dec.name}</div>
+      )}
+      {attrs.length === 0 ? (
+        <div className="text-[9px] font-mono text-[color:rgb(var(--fg-rgb)/0.3)] italic">no parameters</div>
+      ) : (
+        <div className="space-y-0.5">
+          {attrs.map(([k, v]) => {
+            const sval = String(v);
+            const key = bbKey(sval);
+            return (
+              <div key={k} className="flex items-center gap-2 text-[10px] font-mono">
+                <span className="text-[color:rgb(var(--fg-rgb)/0.5)] shrink-0">{k}</span>
+                <span className="text-[color:rgb(var(--fg-rgb)/0.25)]">=</span>
+                <span className={`truncate ${key ? 'text-cyan-300' : 'text-[color:rgb(var(--fg-rgb)/0.75)]'}`}>{sval}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

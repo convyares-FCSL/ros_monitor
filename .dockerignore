@@ -1,0 +1,35 @@
+# Build context hygiene — keep the image small and the build deterministic.
+
+# Python
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Node — reinstalled via `npm ci` inside the build stage
+frontend_new/node_modules/
+frontend_new/dist/
+frontend/node_modules/
+node_modules/
+
+# Old colcon demo workspace + C++ build trees (not needed in the image)
+ros2_demo_ws/build/
+ros2_demo_ws/install/
+ros2_demo_ws/log/
+bt_demo/build/
+build/
+install/
+log/
+
+# Runtime / recorded artefacts
+bt_logs/
+*.btlog
+*.btlog.db3
+
+# VCS / editor / docker
+.git/
+.github/
+.vscode/
+Dockerfile
+docker-compose*.yml
+.dockerignore

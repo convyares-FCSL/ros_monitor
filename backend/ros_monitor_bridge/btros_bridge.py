@@ -49,13 +49,20 @@ DEFAULT_GROOT_PORT = next(iter(GROOT_NODES.values()))  # backward-compat alias
 REQ_FULLTREE = ord('T')
 REQ_STATUS = ord('S')
 REQ_BLACKBOARD = ord('B')
+REQ_TOGGLE_RECORDING = ord('r')  # 2-part: header + b'start'/b'stop'
+REQ_GET_TRANSITIONS = ord('t')   # drains the recorded transition buffer
 
 _BB_POLL_PERIOD = 0.5  # 2 Hz — independent of the faster status poll
+_STATUS_RESYNC_PERIOD = 2.0  # periodic STATUS snapshot to recover the resting state
+
+# GET_TRANSITIONS record: 6-byte µs timestamp + uint16 uid (LE) + uint8 status.
+_TRANSITION_REC_SIZE = 9
 
 REPLY_HEADER_SIZE = 22  # protocol(1)+type(1)+unique_id(4)+tree_uuid(16)
 
 # BT::NodeStatus -> our contract
 _STATUS_MAP = {0: 'IDLE', 1: 'RUNNING', 2: 'SUCCESS', 3: 'FAILURE', 4: 'IDLE'}  # 4 = SKIPPED
+_TERMINAL_STATES = {'SUCCESS', 'FAILURE'}
 
 # Built-in node classification (fallback when the XML has no <TreeNodesModel>).
 _CONTROL_TAGS = {
@@ -142,6 +149,46 @@ def parse_status_payload(payload):
         uid, status = struct.unpack_from('<HB', payload, i)
         out[uid] = _STATUS_MAP.get(status, 'IDLE')
     return out
+
+
+def parse_transitions_payload(payload):
+    """Decode a GET_TRANSITIONS reply into an ordered list of (uid, status_str).
+
+    Each 9-byte record is: 6-byte µs timestamp (relative to recording start) +
+    uint16 uid (LE) + uint8 status. Unlike the STATUS snapshot this preserves
+    *every* transition in tick order — including synchronous Script/Condition
+    nodes that flip to FAILURE and are reset within a single tick, which a
+    snapshot poll collapses away.
+
+    Returns None if the payload isn't a whole number of records (unexpected
+    wire format) so the caller can fall back to snapshot polling.
+    """
+    n = len(payload)
+    if n == 0:
+        return []
+    if n % _TRANSITION_REC_SIZE != 0:
+        return None
+    out = []
+    for i in range(0, n, _TRANSITION_REC_SIZE):
+        uid = struct.unpack_from('<H', payload, i + 6)[0]
+        out.append((uid, _STATUS_MAP.get(payload[i + 8], 'IDLE')))
+    return out
+
+
+def coalesce_transitions(transitions):
+    """Collapse a tick-ordered transition list to one state per uid.
+
+    Preserves a terminal (SUCCESS/FAILURE) a node reached even if its parent
+    reset it to IDLE later in the same batch — otherwise the momentary failure
+    would vanish, which is the whole reason snapshot polling misses it. A real
+    re-entry (a later RUNNING/terminal) still wins over a held terminal.
+    """
+    winner: dict[int, str] = {}
+    for uid, state in transitions:
+        if winner.get(uid) in _TERMINAL_STATES and state == 'IDLE':
+            continue  # don't let a post-tick reset hide the terminal result
+        winner[uid] = state
+    return winner
 
 
 # --- XML -> blueprint -------------------------------------------------------
@@ -357,6 +404,42 @@ class BTRosBridge:
             return None
         return frames[1]  # payload frame (header is frames[0])
 
+    def _set_recording(self, sock, enable):
+        """Toggle Groot2 transition recording. Returns True on success.
+
+        BT.CPP's TOGGLE_RECORDING is a 2-part request whose payload is
+        b'start'/b'stop'. A successful reply carries a full ReplyHeader; older
+        executors without the 't'/'r' protocol answer with a short b'error'
+        frame, which we treat as "transitions unavailable".
+        """
+        sock.send_multipart([
+            build_request(REQ_TOGGLE_RECORDING, self._next_id()),
+            b'start' if enable else b'stop',
+        ])
+        frames = sock.recv_multipart()
+        return bool(frames) and len(frames[0]) >= REPLY_HEADER_SIZE
+
+    def _request_transitions(self, sock):
+        """Send GET_TRANSITIONS; return the (possibly empty) payload frame."""
+        sock.send(build_request(REQ_GET_TRANSITIONS, self._next_id()))
+        frames = sock.recv_multipart()
+        if len(frames) < 2 or len(frames[0]) < REPLY_HEADER_SIZE:
+            return None
+        return frames[1]
+
+    def _emit_status_deltas(self, tree_id, deltas, now):
+        """Broadcast a batch of (uid, state) node-status changes to clients."""
+        if not deltas:
+            return
+        self.runtime.dispatch_event({
+            "type": "bt_delta", "timestamp": now,
+            "data": {
+                "tree_id": tree_id,
+                "deltas": [{"id": uid, "state": state} for uid, state in deltas],
+            },
+            "source": self.label,
+        })
+
     def _request_blackboard(self, sock, bb_ids: list[str]) -> dict:
         """Send a 2-part BLACKBOARD request; return parsed {tree_id: {key: val}}.
 
@@ -455,12 +538,35 @@ class BTRosBridge:
             f" | blackboard IDs: {bb_ids}"
         )
 
-        last_status = {}
+        last_status: dict[int, str] = {}
         last_blueprint = now
         last_blackboard = 0.0  # force immediate first poll
+        last_resync = now
 
-        # 2) Poll status and blackboard; emit deltas on change.
-        # Both share the single REQ socket — requests are strictly sequential.
+        # Enable Groot2 transition recording. When available, we drain the full
+        # per-tick transition stream ('t') instead of diffing STATUS snapshots —
+        # the only way to catch synchronous Script/Condition nodes that flip to
+        # FAILURE and reset within a single tick (snapshot polling collapses
+        # those away). Falls back to snapshot diffing on older executors.
+        use_transitions = False
+        try:
+            use_transitions = self._set_recording(sock, True)
+        except Exception:  # noqa: BLE001 — recording is best-effort
+            use_transitions = False
+        self.logger.info(
+            f"BTRos: {prefix}status source = "
+            + ("TRANSITIONS (live failure capture)" if use_transitions
+               else "STATUS snapshot (transitions unavailable)")
+        )
+
+        # Colour the tree with the current resting state immediately on connect.
+        snap = parse_status_payload(self._request(sock, REQ_STATUS) or b'')
+        self._emit_status_deltas(
+            tree_id, [(u, s) for u, s in snap.items() if u in known_ids], now)
+        last_status = snap
+
+        # 2) Poll status/transitions and blackboard; emit deltas.
+        # All requests share the single REQ socket — strictly sequential.
         while self._running:
             now = time.time()
             if now - last_blueprint >= self.blueprint_reemit_s:
@@ -503,16 +609,56 @@ class BTRosBridge:
                     })
                 last_blackboard = now
 
-            payload = self._request(sock, REQ_STATUS)
-            if payload is None:
-                raise RuntimeError("no STATUS reply")
-            status = parse_status_payload(payload)
-            for uid, state in status.items():
-                if uid in known_ids and last_status.get(uid) != state:
-                    self.runtime.dispatch_event({
-                        "type": "bt_delta", "timestamp": now,
-                        "data": {"tree_id": tree_id, "id": uid, "state": state},
-                        "source": self.label,
-                    })
-            last_status = status
+            if use_transitions:
+                payload = self._request_transitions(sock)
+                if payload is None:
+                    raise RuntimeError("no GET_TRANSITIONS reply")
+                transitions = parse_transitions_payload(payload)
+                if transitions is None:
+                    # Unexpected record size — abandon transitions for this
+                    # session and fall back to snapshot diffing next loop.
+                    self.logger.warning(
+                        f"BTRos: {prefix}unexpected transition record size; "
+                        f"falling back to STATUS polling")
+                    use_transitions = False
+                else:
+                    winner = coalesce_transitions(transitions)
+                    self._emit_status_deltas(
+                        tree_id,
+                        [(u, s) for u, s in winner.items() if u in known_ids],
+                        now)
+                    last_status.update(winner)
+                    # Periodic snapshot resync surfaces any active state the
+                    # transition stream missed (e.g. buffer drained by a
+                    # co-running Groot2). It never emits IDLE, so it can't erase
+                    # a held terminal result.
+                    if now - last_resync >= _STATUS_RESYNC_PERIOD:
+                        snap = parse_status_payload(self._request(sock, REQ_STATUS) or b'')
+                        resync = [(u, s) for u, s in snap.items()
+                                  if u in known_ids and s != 'IDLE'
+                                  and last_status.get(u) != s]
+                        self._emit_status_deltas(tree_id, resync, now)
+                        for u, s in resync:
+                            last_status[u] = s
+                        last_resync = now
+            else:
+                payload = self._request(sock, REQ_STATUS)
+                if payload is None:
+                    raise RuntimeError("no STATUS reply")
+                status = parse_status_payload(payload)
+                self._emit_status_deltas(
+                    tree_id,
+                    [(u, s) for u, s in status.items()
+                     if u in known_ids and last_status.get(u) != s],
+                    now)
+                last_status = status
+
             time.sleep(self.status_period)
+
+        # Clean shutdown: stop recording so we don't leave the executor buffering
+        # transitions for a client that's gone. Best-effort — ignore any error.
+        if use_transitions:
+            try:
+                self._set_recording(sock, False)
+            except Exception:  # noqa: BLE001
+                pass

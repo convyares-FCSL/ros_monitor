@@ -7,7 +7,7 @@ browser.
 | View | What it does |
 |---|---|
 | **ROS Introspection** | Real-time 3D graph of nodes, topics, services, and actions with live telemetry particles and Hz tracking |
-| **Behavior Tree** | Unreal-style BT.CPP v4 visualizer — live node states, blackboard, port remappings, multi-tree explorer |
+| **Behavior Tree** | Unreal-style BT.CPP v4 visualizer — live node states (transition-accurate, catches synchronous failures), blackboard, port remappings, multi-tree explorer |
 | **BT Replay** | Scrub, seek, and play back recorded `.btlog` files with a density histogram and variable speed |
 | **Telemetry** | react-chartjs-2 live chart — record any ROS topic field or BT blackboard variable, zoom/pan, dual Y axes, CSV export; data persists across tab switches |
 | **Logging** | Live `/rosout` console with level filter, search, and payload capture |
@@ -132,6 +132,28 @@ to target a specific executor.
 
 See **[bt_demo/README.md](bt_demo/README.md)** for the full standalone C++ demo.
 
+### Live node-state capture (synchronous failures)
+
+The BT view colours each node from BT.CPP's Groot2 link. Rather than polling the
+`STATUS` snapshot — which samples the *current* state and so misses a
+synchronous `Script`/`Condition` leaf that returns `FAILURE` and is reset within
+a single tick — the bridge enables the executor's **transition recording**
+(`TOGGLE_RECORDING`) and drains the per-tick **transition stream**
+(`GET_TRANSITIONS`). This is the same data source Groot2 uses, so every
+status change is captured, including momentary failures.
+
+Per poll, the transitions for each node are coalesced to one state, **preserving
+a terminal `SUCCESS`/`FAILURE`** even when its parent resets it to `IDLE` in the
+same tick (a genuine re-entry to `RUNNING` still wins). The bridge log prints
+`status source = TRANSITIONS (live failure capture)` when recording is active;
+older executors without the `'r'`/`'t'` protocol fall back to snapshot polling
+automatically.
+
+> **Caveat:** recording is a server-wide toggle. If Groot2 and this monitor are
+> connected to the **same** executor at once, each `GET_TRANSITIONS` drains the
+> shared buffer and the two split the transitions between them. Use one at a
+> time per executor.
+
 ### Blackboard boolean display
 
 BT.CPP exports `bool` blackboard entries as `0`/`1` integers. The bridge
@@ -182,6 +204,7 @@ No C++ changes are required in your executor.
 ## Documentation
 
 - **[INSTALLATION.md](INSTALLATION.md)** — full setup guide for a fresh machine.
+- **[DOCKER.md](DOCKER.md)** — running the monitor (and a system-under-test like HyFleet) in Docker on one host.
 - **[docs/README.md](docs/README.md)** — architecture, run modes, WebSocket protocol.
 - **[docs/walkthrough.md](docs/walkthrough.md)** — how the system was built, layer by layer.
 - **[bt_demo/README.md](bt_demo/README.md)** — building and running the real Groot2 C++ demo.

@@ -1,0 +1,42 @@
+# ROS Monitor — single-host Docker Compose.
+#
+# Uses host networking so the bridge shares the host's network namespace and
+# discovers the live ROS 2 graph (HyFleet, sims, anything on the same
+# ROS_DOMAIN_ID) over DDS automatically — no port mapping or peer config needed.
+#
+#   UI:  http://localhost:7260
+#   WS:  ws://localhost:8765
+#
+# Quick start:
+#   ROS_DOMAIN_ID=0 docker compose up --build
+#
+services:
+  ros-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ros-monitor:latest
+    container_name: ros-monitor
+    # Share the host network namespace → DDS multicast discovery just works,
+    # and the UI is reachable on localhost:7260. (Ports are NOT mapped in this
+    # mode; EXPOSE in the Dockerfile is informational.)
+    network_mode: host
+    environment:
+      # Must match the ROS_DOMAIN_ID that HyFleet / your nodes run on.
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      # Uncomment to match a non-default RMW used by the system-under-test.
+      # - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      # Point this at a mounted overlay (below) to decode custom message types.
+      # - ROS_MONITOR_OVERLAY_SETUP=/overlay/install/setup.bash
+    # volumes:
+    #   # Mount HyFleet's built workspace so the monitor can deserialize its
+    #   # custom interfaces (read-only). Pair with ROS_MONITOR_OVERLAY_SETUP above.
+    #   - /home/ecm/ai-workspace/projects/hyfleet_ws/install:/overlay/install:ro
+    #   # Persist recorded BT logs outside the container.
+    #   - ./bt_logs:/app/bt_logs
+    # Restore ROS-node → host-PID mapping in the introspection view by sharing
+    # the host PID namespace (only meaningful when nodes run directly on the host,
+    # not in their own containers).
+    # pid: host
+    command: ["--mode", "full"]
+    restart: unless-stopped
