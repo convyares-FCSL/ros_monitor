@@ -96,14 +96,36 @@ def parse_blackboard_payload(payload: bytes) -> dict:
     Keys whose C++ type has no registered JsonExporter converter are silently
     absent from the inner map.
 
+    Some newer BT.CPP versions wrap each entry as {value: X, type: "typename"}.
+    This function flattens those to plain values and promotes bool entries.
+
     Returns an empty dict on any error (bad payload, missing msgpack library).
     """
     if not payload:
         return {}
     try:
         import msgpack  # noqa: PLC0415 — optional dep, imported lazily
-        result = msgpack.unpackb(payload, raw=False)
-        return result if isinstance(result, dict) else {}
+        raw = msgpack.unpackb(payload, raw=False)
+        if not isinstance(raw, dict):
+            return {}
+        result: dict = {}
+        for tree_id, tree_vars in raw.items():
+            if not isinstance(tree_vars, dict):
+                continue
+            flat: dict = {}
+            for key, entry in tree_vars.items():
+                if isinstance(entry, dict) and 'value' in entry and 'type' in entry:
+                    val = entry['value']
+                    if entry['type'] == 'bool' and not isinstance(val, bool):
+                        try:
+                            val = bool(int(val))
+                        except (TypeError, ValueError):
+                            pass
+                    flat[key] = val
+                else:
+                    flat[key] = entry
+            result[tree_id] = flat
+        return result
     except Exception:  # noqa: BLE001
         return {}
 
@@ -124,7 +146,7 @@ def parse_status_payload(payload):
 
 # --- XML -> blueprint -------------------------------------------------------
 def _parse_models(root):
-    """name -> {'category': str, 'ports': {port_name: 'input'|'output'}}."""
+    """name -> {'category': str, 'ports': {port_name: {'dir': str, 'type': str}}}."""
     models = {}
     model_root = root.find('TreeNodesModel')
     if model_root is None:
@@ -138,12 +160,16 @@ def _parse_models(root):
             continue
         ports = {}
         for port in entry:
+            pname = port.get('name')
+            if not pname:
+                continue
+            ptype = port.get('type', '')
             if port.tag == 'input_port':
-                ports[port.get('name')] = 'input'
+                ports[pname] = {'dir': 'input', 'type': ptype}
             elif port.tag == 'output_port':
-                ports[port.get('name')] = 'output'
+                ports[pname] = {'dir': 'output', 'type': ptype}
             elif port.tag == 'inout_port':
-                ports[port.get('name')] = 'input'
+                ports[pname] = {'dir': 'input', 'type': ptype}
         models[node_id] = {'category': category, 'ports': ports}
     return models
 
@@ -197,7 +223,8 @@ def parse_tree_xml(xml_str):
         for attr, value in elem.attrib.items():
             if attr in _RESERVED_ATTRS:
                 continue
-            direction = model_ports.get(attr, 'input')
+            info = model_ports.get(attr, 'input')
+            direction = info['dir'] if isinstance(info, dict) else info
             ports[direction][attr] = value
         return {k: v for k, v in ports.items() if v}
 
@@ -244,7 +271,23 @@ def parse_tree_xml(xml_str):
 
     main_bt = behavior_trees[main_id]
     root_id = process(list(main_bt)[0], {main_id})
-    return {'tree_id': main_id, 'version': 1, 'root_id': root_id, 'nodes': nodes}
+
+    # Trace port remappings to find which blackboard keys map to bool ports.
+    # Used by _session to coerce 0/1 integers → Python bool before dispatch.
+    bool_keys: list = []
+    for node in nodes:
+        model_ports = models.get(node['type'], {}).get('ports', {})
+        for port_name, info in model_ports.items():
+            if not isinstance(info, dict) or info.get('type', '').lower() != 'bool':
+                continue
+            for direction in ('input', 'output'):
+                val = node['ports'].get(direction, {}).get(port_name, '')
+                m = _BB_KEY_RE.match(str(val).strip())
+                if m and m.group(1) not in bool_keys:
+                    bool_keys.append(m.group(1))
+
+    return {'tree_id': main_id, 'version': 1, 'root_id': root_id, 'nodes': nodes,
+            'bool_keys': bool_keys}
 
 
 _BB_KEY_RE = re.compile(r'^\{(.+)\}$')
@@ -389,6 +432,7 @@ class BTRosBridge:
             raise RuntimeError("no FULLTREE reply")
         xml_str = xml_payload.decode('utf-8')
         blueprint = parse_tree_xml(xml_str)
+        bool_keys = set(blueprint.pop('bool_keys', []))
         tree_id = blueprint['tree_id']
         # All BehaviorTree IDs in the XML — sent as the bb_list for BLACKBOARD requests.
         bb_ids = extract_bb_ids(xml_str)
@@ -438,6 +482,16 @@ class BTRosBridge:
                     for tree_vars in bb_data.values():
                         if isinstance(tree_vars, dict):
                             merged.update(tree_vars)
+                    # Coerce known-bool keys: BT.CPP 4.x exports bool as 0/1 int.
+                    # Promoting to Python bool → JSON true/false → JS boolean so
+                    # the frontend renders them as "true"/"false" not "0"/"1".
+                    for key in bool_keys:
+                        v = merged.get(key)
+                        if v is not None and not isinstance(v, bool):
+                            try:
+                                merged[key] = bool(int(v))
+                            except (TypeError, ValueError):
+                                pass
                     self.runtime.dispatch_event({
                         "type": "bt_blackboard", "timestamp": now,
                         "data": {
